@@ -19,6 +19,9 @@ Read this file before starting any ticket. It holds everything the tickets share
   below.
 - If a ticket contradicts this README, or something pinned here cannot work, stop and report
   it. Do not guess, and do not edit other tickets.
+- `/ticket NNNN` runs a ticket end to end: implementer, reviewer, up to two fix rounds, then
+  an offer to merge into `master`. It is defined in `.claude/skills/ticket/SKILL.md`; the
+  two agents are defined in `.claude/agents/`.
 
 ## Index
 
