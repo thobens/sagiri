@@ -212,6 +212,20 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_creation_yields_one_key_and_one_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("d/key");
+        let keys: Vec<[u8; 32]> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| s.spawn(|| *Key::load_or_create(&path).unwrap().as_bytes()))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert!(keys.iter().all(|k| *k == keys[0]));
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
     fn rejects_group_or_other_permissions() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("key");

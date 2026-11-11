@@ -92,6 +92,14 @@ fn mimic_retry_vector() {
     assert_eq!(p.mimic("d", b"7", "7"), "4");
 }
 
+/// The first attempt for seed "196" yields "42" itself, so the result is the retry output.
+/// Unlike a one-digit shape, two digits distinguish the counter encodings.
+#[test]
+fn mimic_retry_vector_two_digits() {
+    let p = test_pseudo();
+    assert_eq!(p.mimic("d", b"196", "42"), "40");
+}
+
 #[test]
 fn mimic_never_returns_the_shape() {
     let p = test_pseudo();
