@@ -1,7 +1,7 @@
 ---
 id: "0001"
 title: Project scaffolding
-status: todo
+status: done
 depends_on: []
 ---
 
