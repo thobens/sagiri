@@ -1,7 +1,7 @@
 ---
 id: "0003"
 title: Detection and replacement engine
-status: todo
+status: done
 depends_on: ["0002"]
 ---
 
