@@ -83,3 +83,26 @@ fn mimic_vectors() {
         assert_eq!(p.mimic(domain, seed, shape), expected, "{shape}");
     }
 }
+
+/// The first attempt for seed "7" yields "7" itself, so this vector locks the retry encoding
+/// (seed followed by the big-endian 32-bit retry counter).
+#[test]
+fn mimic_retry_vector() {
+    let p = test_pseudo();
+    assert_eq!(p.mimic("d", b"7", "7"), "4");
+}
+
+#[test]
+fn mimic_never_returns_the_shape() {
+    let p = test_pseudo();
+    for shape in ["7", "a", "A", "0", "z9"] {
+        for i in 0..500 {
+            let seed = i.to_string();
+            assert_ne!(
+                p.mimic("d", seed.as_bytes(), shape),
+                shape,
+                "{shape} {seed}"
+            );
+        }
+    }
+}

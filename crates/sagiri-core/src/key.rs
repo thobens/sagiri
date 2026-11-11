@@ -88,23 +88,32 @@ impl Key {
                 .map_err(io_err)?;
         }
         let key = Key::generate()?;
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-        {
-            Ok(mut f) => {
-                let mut line = Zeroizing::new([0u8; KEY_LEN * 2 + 1]);
-                for (i, b) in key.as_bytes().iter().enumerate() {
-                    line[2 * i] = HEX[(b >> 4) as usize];
-                    line[2 * i + 1] = HEX[(b & 15) as usize];
-                }
-                line[KEY_LEN * 2] = b'\n';
-                f.write_all(&line[..]).map_err(io_err)?;
-                f.sync_all().map_err(io_err)?;
-                Ok(key)
+        // Write a private temp file first and publish it with an atomic hard link, so a
+        // concurrent reader never sees a partial key and a failed write leaves nothing behind.
+        let mut suffix = [0u8; 8];
+        getrandom::fill(&mut suffix).map_err(KeyError::Random)?;
+        let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+        tmp_name.push(format!(".tmp{:016x}", u64::from_be_bytes(suffix)));
+        let tmp = path.with_file_name(tmp_name);
+        let written = (|| {
+            let mut f = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            let mut line = Zeroizing::new([0u8; KEY_LEN * 2 + 1]);
+            for (i, b) in key.as_bytes().iter().enumerate() {
+                line[2 * i] = HEX[(b >> 4) as usize];
+                line[2 * i + 1] = HEX[(b & 15) as usize];
             }
+            line[KEY_LEN * 2] = b'\n';
+            f.write_all(&line[..])?;
+            f.sync_all()?;
+            fs::hard_link(&tmp, path)
+        })();
+        let _ = fs::remove_file(&tmp);
+        match written {
+            Ok(()) => Ok(key),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => load(path),
             Err(e) => Err(io_err(e)),
         }
@@ -197,6 +206,8 @@ mod tests {
         assert_eq!(k1.as_bytes(), k2.as_bytes());
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(text.len(), 65);
+        // No temp file is left behind.
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
         assert!(text.ends_with('\n'));
     }
 
