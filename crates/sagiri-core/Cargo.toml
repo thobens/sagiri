@@ -8,3 +8,14 @@ description = "Detection and pseudonymization library for Sagiri"
 
 [lints]
 workspace = true
+
+[dependencies]
+getrandom = "0.4.3"
+hmac = "0.13.0"
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+zeroize = "1.9.1"
+
+[dev-dependencies]
+proptest = "1.12.0"
+tempfile = "3.27.0"

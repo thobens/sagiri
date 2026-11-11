@@ -1,7 +1,7 @@
 ---
 id: "0002"
 title: Keyed pseudonymization primitives and key file
-status: todo
+status: done
 depends_on: ["0001"]
 ---
 
