@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser};
 
-/// Sagiri replaces sensitive values in pasted text with consistent, realistic-looking fakes.
+// The `about` text comes from `description` in this crate's Cargo.toml.
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {}
