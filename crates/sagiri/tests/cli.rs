@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 use predicates::str::contains;
 
-const ABOUT: &str = "Obfuscates pasted text with consistent, realistic-looking fake values";
+const ABOUT: &str = "Sagiri obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones.";
 
 fn sagiri() -> Command {
     Command::cargo_bin("sagiri").unwrap()

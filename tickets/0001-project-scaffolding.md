@@ -71,8 +71,9 @@ new contributor will find them.
 - [ ] `cargo run -q -p sagiri -- --version` prints `sagiri 0.1.0`.
 - [ ] `cargo run -q -p sagiri -- --help` prints a usage text that contains the `about`
       sentence.
-- [ ] Adding `println!("x");` to `crates/sagiri-core/src/lib.rs` makes `scripts/check.sh`
-      fail (verify, then remove it).
+- [ ] Adding a function containing `println!("x");` to `crates/sagiri-core/src/lib.rs`
+      makes `scripts/check.sh` fail (verify, then remove it). The statement must sit inside
+      a function body: at the top level it is a compile error with or without the lint.
 - [ ] Adding an `unsafe {}` block to either crate makes `scripts/check.sh` fail (verify,
       then remove it).
 - [ ] `git status` is clean after a build: `target/` is ignored, `Cargo.lock` is tracked.

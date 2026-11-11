@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Obfuscates pasted text with consistent, realistic-looking fake values"
+description = "Sagiri obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones."
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
@@ -15,4 +15,4 @@ workspace = true
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
-predicates = "3.1.4"
+predicates = { version = "3.1.4", default-features = false }
