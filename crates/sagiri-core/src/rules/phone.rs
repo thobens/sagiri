@@ -77,8 +77,8 @@ fn parse(text: &str, start: usize) -> Option<Parsed> {
     let cc_len = country_code_len(&b[start + 1..first_end])?;
     let mut digits: Vec<u8> = b[start + 1..first_end].to_vec();
     let mut zero_group = None;
-    // The last position that ends on a digit, with the state at that point.
-    let mut best = (first_end, digits.len(), None::<Range<usize>>);
+    // Every group boundary: (end offset, digits so far, trunk group so far).
+    let mut ends = vec![(first_end, digits.len(), None::<Range<usize>>)];
     let mut pos = first_end;
     let mut groups = 0;
     loop {
@@ -93,34 +93,46 @@ fn parse(text: &str, start: usize) -> Option<Parsed> {
                 if ge == q + 1 || b.get(ge) != Some(&b')') {
                     break;
                 }
+                pos = ge + 1;
                 if groups == 0 && first_end - (start + 1) == cc_len && &b[q + 1..ge] == b"0" {
+                    // The trunk group is not a boundary: it holds no counted digit.
                     zero_group = Some(q..ge + 1);
                 } else {
                     digits.extend_from_slice(&b[q + 1..ge]);
+                    ends.push((pos, digits.len(), zero_group.clone()));
                 }
-                pos = ge + 1;
             }
             Some(c) if c.is_ascii_digit() => {
                 let ge = digit_run_end(b, q);
                 digits.extend_from_slice(&b[q..ge]);
                 pos = ge;
-                best = (pos, digits.len(), zero_group.clone());
+                ends.push((pos, digits.len(), zero_group.clone()));
             }
             _ => break,
         }
         groups += 1;
     }
-    let (end, n, zero_group) = best;
+    // The longest prefix that ends at a group boundary and has a valid digit count. A
+    // single digit run over the maximum has no shorter boundary and is rejected.
+    let (end, n, zero_group) = ends
+        .into_iter()
+        .rev()
+        .find(|(_, n, _)| (MIN_DIGITS..=MAX_DIGITS).contains(n))?;
     digits.truncate(n);
-    if !(MIN_DIGITS..=MAX_DIGITS).contains(&digits.len()) {
-        return None;
-    }
     Some(Parsed {
         end,
         digits,
         cc_len,
         zero_group,
     })
+}
+
+/// Astronomically unlikely, but never return the original digits: if `out` equals
+/// `original`, shift the first national digit within 2-9.
+fn avoid_identity(out: &mut [u8], original: &[u8], cc_len: usize) {
+    if out == original {
+        out[cc_len] = b'2' + (out[cc_len] - b'2' + 1) % 8;
+    }
 }
 
 /// Detects and replaces international phone numbers.
@@ -134,9 +146,6 @@ impl Rule for PhoneRule {
     fn detect(&self, text: &str) -> Vec<Range<usize>> {
         let mut out: Vec<Range<usize>> = Vec::new();
         for (i, _) in text.match_indices('+') {
-            if out.last().is_some_and(|r| i < r.end) {
-                continue;
-            }
             let blocked = text[..i]
                 .chars()
                 .next_back()
@@ -166,11 +175,7 @@ impl Rule for PhoneRule {
                 b'0' + stream.below(10) as u8
             };
         }
-        if out == p.digits {
-            // Astronomically unlikely, but never return the original digits.
-            let k = p.cc_len;
-            out[k] = b'2' + (out[k] - b'2' + 1) % 8;
-        }
+        avoid_identity(&mut out, &p.digits, p.cc_len);
         let mut it = out.into_iter();
         let mut s = String::with_capacity(original.len());
         for (i, c) in original.char_indices() {
@@ -217,7 +222,9 @@ mod tests {
     #[test]
     fn detects_and_replaces() {
         let e = engine();
-        let cases: [(&str, &str, usize); 9] = [
+        let cases: [(&str, &str, usize); 11] = [
+            ("+353 87 123 4567", "+353 87 123 4567", 3),
+            ("+420 601 123 456", "+420 601 123 456", 3),
             ("+41 79 123 45 67", "+41 79 123 45 67", 2),
             ("+41791234567", "+41791234567", 2),
             ("+41 (0)79 123 45 67", "+41 (0)79 123 45 67", 2),
@@ -235,9 +242,12 @@ mod tests {
             let r = &f[0].replacement;
             assert_eq!(shape(r), shape(number), "{input}");
             assert_ne!(r, number, "{input}");
-            let (d_in, d_out) = (digits(number), digits(r));
+            // The digit of a `(0)` group is neither counted nor replaced.
+            let d_in = digits(&number.replace("(0)", ""));
+            let d_out = digits(&r.replace("(0)", ""));
             assert_eq!(d_in.len(), d_out.len(), "{input}");
             assert_eq!(d_in[..cc], d_out[..cc], "{input}");
+            assert!((b'2'..=b'9').contains(&d_out.as_bytes()[cc]), "{input}");
             assert_eq!(e.obfuscate(input), input.replace(number, r), "{input}");
         }
     }
@@ -257,13 +267,16 @@ mod tests {
     #[test]
     fn first_national_digit_is_2_to_9() {
         let e = engine();
-        for n in 0..300u32 {
-            let input = format!("+41 {:09}", 700_000_000 + n * 7919);
-            let out = e.obfuscate(&input);
-            let d = digits(&out);
-            assert!((b'2'..=b'9').contains(&d.as_bytes()[2]), "{out}");
-            assert_eq!(d.len(), 11);
-            assert_eq!(&d[..2], "41");
+        for (cc, ndigits) in [("1", 10), ("41", 9), ("353", 9)] {
+            for n in 0..300u32 {
+                let national = 1_000_000_000 + n * 7919;
+                let input = format!("+{cc} {}", &national.to_string()[..ndigits]);
+                let out = e.obfuscate(&input);
+                let d = digits(&out);
+                assert!((b'2'..=b'9').contains(&d.as_bytes()[cc.len()]), "{out}");
+                assert_eq!(d.len(), cc.len() + ndigits, "{out}");
+                assert!(d.starts_with(cc), "{out}");
+            }
         }
     }
 
@@ -280,7 +293,6 @@ mod tests {
             "0041 79 123 45 67",
             "+4179123456789012",
             "+41  79 123 45 67",
-            "+41 79 123 45 67 89 01 23",
             "+4 1791234567",
             "+41 7912",
         ] {
@@ -298,6 +310,57 @@ mod tests {
             got,
             ["+41 79 123 45 67", "+1 415 555 0132", "+1-415-555-0132"]
         );
+    }
+
+    #[test]
+    fn trailing_parenthesised_group_is_part_of_the_match() {
+        let t = "+41 79 123 45 (67)";
+        assert_eq!(PhoneRule.detect(t), vec![0..t.len()]);
+        let e = engine();
+        let out = e.obfuscate(t);
+        assert_eq!(shape(&out), shape(t));
+        assert_ne!(out, t);
+    }
+
+    #[test]
+    fn too_long_grouped_run_falls_back_to_longest_valid_prefix() {
+        let t = "+41 79 123 45 67 89 01 23";
+        let r = PhoneRule.detect(t);
+        assert_eq!(r.len(), 1);
+        assert_eq!(&t[r[0].clone()], "+41 79 123 45 67 89 01");
+        let t = "+41 79 123 45 67 12345";
+        let r = PhoneRule.detect(t);
+        assert_eq!(&t[r[0].clone()], "+41 79 123 45 67");
+        // A contiguous run over 15 digits stays rejected.
+        assert!(PhoneRule.detect("+4179123456789012").is_empty());
+    }
+
+    #[test]
+    fn known_limitation_following_number_is_absorbed() {
+        // `24` joins the number as one more group.
+        let t = "Call +1 415 555 0132 24 hours";
+        let r = PhoneRule.detect(t);
+        assert_eq!(&t[r[0].clone()], "+1 415 555 0132 24");
+    }
+
+    #[test]
+    fn avoid_identity_changes_a_colliding_result() {
+        let original = *b"41791234567";
+        let mut out = original;
+        avoid_identity(&mut out, &original, 2);
+        assert_ne!(out, original);
+        assert_eq!(&out[..2], b"41");
+        assert!((b'2'..=b'9').contains(&out[2]));
+        assert_eq!(&out[3..], &original[3..]);
+        // Wraps from 9 to 2.
+        let original = *b"41991234567";
+        let mut out = original;
+        avoid_identity(&mut out, &original, 2);
+        assert_eq!(out[2], b'2');
+        // A differing result is left alone.
+        let mut other = *b"41701234567";
+        avoid_identity(&mut other, &original, 2);
+        assert_eq!(&other, b"41701234567");
     }
 
     #[test]
