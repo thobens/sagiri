@@ -40,7 +40,7 @@ fn url_vectors() {
         ),
         (
             "postgres://admin:s3cret@db01.corp.internal:5432/app?sslmode=require",
-            "postgres://petin:o0ateb@ud65.okal.internal:5432/app?sslmode=adadefe",
+            "postgres://ifibo:d6ramu@ud65.okal.internal:5432/app?sslmode=urobuko",
         ),
         (
             "http://10.0.0.5:8080/nodes/10.0.0.6?peer=10.0.0.7#top",
@@ -60,5 +60,15 @@ fn url_host_matches_bare_values() {
     assert_eq!(
         e.obfuscate("git.acme.com https://git.acme.com/x 10.0.0.5 http://10.0.0.5:8080/x"),
         format!("{host} https://{host}/x {ip} http://{ip}:8080/x")
+    );
+}
+
+#[test]
+fn url_escape_vector() {
+    let e = test_engine();
+    let input = "https://acme.com/?q=ab%2Fcd%41ef&r=https%3A%2F%2Fgit.acme.com%2F";
+    assert_eq!(
+        e.obfuscate(input),
+        "https://piti.com/?q=to%2Fik%41zi&r=https%3A%2F%2Fita.piti.com%2F"
     );
 }

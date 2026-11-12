@@ -67,6 +67,10 @@ and test the shorter chain, repeatedly. A chain shortened this way is accepted o
 suffix from the public suffix list, not with an internal suffix. This finds the domain in
 `acme.com.conf` and `acme.com.tar.gz` without turning `settings.local.json` into a host.
 
+A `%XX` escape (two hex digits) directly before a chain is a boundary: the chain starts
+after the escape and the escape stays byte-identical. This keeps hosts inside
+percent-encoded URLs (`https%3A%2F%2Fgit.acme.com`) mapped like the bare host.
+
 The three lists are heuristics. Keep each as one sorted constant so it is easy to extend.
 
 `AMBIGUOUS_TLDS`, top-level domains that are also common file extensions or identifiers in
@@ -106,7 +110,7 @@ pfx php pid pub service sock sql tar tgz tmp toml txt xml xz yaml yml zip zone
   | Part | Treatment |
   |---|---|
   | scheme, `://`, port | kept |
-  | userinfo | user and password separately: `mimic("url-userinfo", value, value)` |
+  | userinfo | user and password separately, as for query values below but with domain `url-userinfo`: percent escapes are kept and each piece between escapes gets its own `mimic` |
   | host, IP literal (with or without brackets) | `ctx.nested(address)` |
   | host, anything else | `hostname::pseudonymize(host, ctx)`; this also maps single-label hosts |
   | path | `ctx.nested(path)` |
@@ -114,7 +118,13 @@ pfx php pid pub service sock sql tar tgz tmp toml txt xml xz yaml yml zip zone
   | fragment | `ctx.nested(fragment)` |
 
   A percent escape (`%` and two hex digits) is copied unchanged by the query-value `mimic`
-  step: apply `mimic` to the pieces between escapes.
+  step: apply `mimic` to the pieces between escapes. Piece number `n` (from 0, one step per
+  preceding escape, empty pieces included) is seeded with the whole value followed by `n`
+  as 4 big-endian bytes, so same-shape pieces differ. A value without escapes is one piece
+  with `n = 0`. The same applies to userinfo values.
+
+  A host made only of digits and dots that is not a dotted-quad IPv4 address (`1.2.3`) is
+  left unchanged.
 
   If nothing changes, return the original; the engine then drops the finding.
 
@@ -139,6 +149,9 @@ pfx php pid pub service sock sql tar tgz tmp toml txt xml xz yaml yml zip zone
   limitation and belongs in the README.
 - **The tables in the acceptance criteria are authoritative.** If an entry cannot be
   satisfied without breaking another one, report it instead of dropping it.
+- **Pinned current behaviour, no special handling:** `10.0.0.5.nip.io` is a hostname and maps
+  label-wise (`97.9.9.8.dun.io` with the test key); wildcard public-suffix rules such as
+  `*.ck` are kept as suffixes.
 - **`nested` for the IP host** means the IP rule's categories and exclusions apply, and an
   address in a URL maps exactly like the same address elsewhere.
 - The `regex` crate has no look-around: check neighbouring characters in code.

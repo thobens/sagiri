@@ -164,6 +164,26 @@ pub fn pseudonymize(host: &str, ctx: &Context<'_>) -> String {
 /// Detects and replaces bare hostnames.
 pub struct HostnameRule;
 
+/// Candidate chains as (start, end, starts right after a percent escape). A `%XX` escape
+/// directly before a chain is a boundary: the chain starts after it.
+fn chains(text: &str) -> Vec<(usize, usize, bool)> {
+    let mut out = Vec::new();
+    for m in CHAIN.find_iter(text) {
+        let (start, end) = (m.start(), m.end());
+        let escaped = start > 0
+            && text.as_bytes()[start - 1] == b'%'
+            && m.as_str().as_bytes()[..2].iter().all(u8::is_ascii_hexdigit);
+        if escaped {
+            if let Some(sub) = CHAIN.find(&text[start + 2..end]) {
+                out.push((start + 2 + sub.start(), end, sub.start() == 0));
+            }
+        } else {
+            out.push((start, end, false));
+        }
+    }
+    out
+}
+
 fn is_alpha_label(label: &str) -> bool {
     label.len() >= 2 && label.bytes().all(|b| b.is_ascii_alphabetic())
 }
@@ -192,12 +212,12 @@ impl Rule for HostnameRule {
 
     fn detect(&self, text: &str) -> Vec<Range<usize>> {
         let mut out = Vec::new();
-        for m in CHAIN.find_iter(text) {
-            let (start, end) = (m.start(), m.end());
-            if text[..start]
-                .chars()
-                .next_back()
-                .is_some_and(char::is_alphanumeric)
+        for (start, end, after_escape) in chains(text) {
+            if !after_escape
+                && text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_alphanumeric)
             {
                 continue;
             }
@@ -205,7 +225,7 @@ impl Rule for HostnameRule {
             if after.is_some_and(char::is_alphanumeric) {
                 continue;
             }
-            let chain = m.as_str();
+            let chain = &text[start..end];
             if chain.split('.').any(|l| l.len() > 63) {
                 continue;
             }
@@ -325,6 +345,33 @@ mod tests {
         assert_ne!(map("acme.github.io"), "acme.github.io");
         assert_eq!(map("co.uk"), "co.uk");
         assert_eq!(map("github.io"), "github.io");
+    }
+
+    #[test]
+    fn wildcard_suffix_is_kept() {
+        // `*.ck` is a wildcard rule in the public suffix list: `foo.ck` is the suffix.
+        let m = map("acme.foo.ck");
+        assert!(m.ends_with(".foo.ck"));
+        assert_eq!(m.len(), "acme.foo.ck".len());
+        assert_ne!(m, "acme.foo.ck");
+        assert_eq!(map("foo.ck"), "foo.ck");
+    }
+
+    #[test]
+    fn escape_before_chain_is_a_boundary() {
+        for (text, want) in [
+            ("%2Fgit.acme.com", "git.acme.com"),
+            ("https%3A%2F%2Fgit.acme.com%2F", "git.acme.com"),
+            ("%2F.acme.com", "acme.com"),
+            ("a%2Facme.com", "acme.com"),
+        ] {
+            assert_eq!(found(text), vec![want], "{text}");
+        }
+        assert_eq!(
+            engine().obfuscate("x%2Fgit.acme.com"),
+            format!("x%2F{}", map("git.acme.com"))
+        );
+        assert!(found("%2Fmain.rs").is_empty());
     }
 
     #[test]

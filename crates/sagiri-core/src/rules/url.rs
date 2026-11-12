@@ -74,14 +74,20 @@ impl Rule for UrlRule {
 }
 
 /// Applies `mimic` to the pieces of `value` between percent escapes; escapes are copied.
+/// Piece number `n` (counting from 0, one per preceding escape) is seeded with the whole
+/// value followed by `n` as 4 big-endian bytes.
 fn mimic_keeping_escapes(p: &Pseudonymizer, domain: &str, value: &str) -> String {
     let b = value.as_bytes();
     let mut out = String::with_capacity(value.len());
     let (mut start, mut i) = (0, 0);
-    let flush = |out: &mut String, from: usize, to: usize| {
+    let mut index: u32 = 0;
+    let mut flush = |out: &mut String, from: usize, to: usize| {
         if from < to {
-            out.push_str(&p.mimic(domain, b, &value[from..to]));
+            let mut seed = b.to_vec();
+            seed.extend_from_slice(&index.to_be_bytes());
+            out.push_str(&p.mimic(domain, &seed, &value[from..to]));
         }
+        index += 1;
     };
     while i < b.len() {
         if b[i] == b'%'
@@ -140,6 +146,9 @@ fn replace_host_port(hostport: &str, ctx: &Context<'_>) -> String {
         String::new()
     } else if host.contains(':') || looks_like_ipv4(host) {
         ctx.nested(host)
+    } else if host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        // Digits and dots that are not an IPv4 address (`1.2.3`): left as they are.
+        host.to_string()
     } else {
         hostname::pseudonymize(host, ctx)
     };
@@ -246,7 +255,7 @@ mod tests {
     #[test]
     fn not_detected() {
         for text in [
-            "xhttps://",
+            "éhttps://acme.com/",
             "1http://a.b",
             "mailto:a@b.com",
             "http://",
@@ -384,6 +393,53 @@ mod tests {
         assert_eq!(&q[2..5], "%2F");
         assert_eq!(&q[7..10], "%41");
         assert_ne!(&q[..2], "ab");
+        assert_ne!(&q[5..7], "cd");
+        assert_ne!(&q[10..], "ef");
+        // Pieces have their own seeds: three different-looking pieces.
+        assert!(q[..2] != q[5..7] && q[..2] != q[10..] && q[5..7] != q[10..]);
+        let same = engine().obfuscate("http://acme.com/?q=ab%2Fab%41ab");
+        let q = same.split_once("?q=").unwrap().1;
+        assert!(
+            q[..2] != q[5..7] && q[5..7] != q[10..] && q[..2] != q[10..],
+            "{q}"
+        );
+    }
+
+    #[test]
+    fn userinfo_escape_is_kept() {
+        let out = engine().obfuscate("ftp://bob:p%40ss@localhost/");
+        let pass = out.split(':').nth(2).unwrap().split('@').next().unwrap();
+        assert_eq!(pass.len(), 6);
+        assert_eq!(&pass[1..4], "%40");
+        assert_ne!(pass, "p%40ss");
+    }
+
+    #[test]
+    fn encoded_url_in_query_value_and_path() {
+        let e = engine();
+        let acme = e.obfuscate("acme.com");
+        let git = e.obfuscate("git.acme.com");
+        assert_eq!(
+            e.obfuscate("https://acme.com/?redirect=https%3A%2F%2Fgit.acme.com%2F"),
+            format!("https://{acme}/?redirect=https%3A%2F%2F{git}%2F")
+        );
+        assert_eq!(
+            e.obfuscate("https://acme.com/go/https%3A%2F%2Fgit.acme.com%2Fx"),
+            format!("https://{acme}/go/https%3A%2F%2F{git}%2Fx")
+        );
+    }
+
+    #[test]
+    fn digits_and_dots_host_that_is_not_ipv4_is_kept() {
+        let e = engine();
+        assert!(e.analyze("http://1.2.3/x").is_empty());
+        assert!(e.analyze("http://1.2.3.4.5/x").is_empty());
+    }
+
+    #[test]
+    fn ip_prefixed_dns_name_maps_label_wise() {
+        // `10.0.0.5.nip.io` is a hostname; the digit labels are mimicked, not IP-mapped.
+        assert_eq!(engine().obfuscate("10.0.0.5.nip.io"), "97.9.9.8.dun.io");
     }
 
     #[test]
