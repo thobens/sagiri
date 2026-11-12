@@ -1,12 +1,13 @@
 //! Runs rules over a text, resolves overlaps and renders the output.
 
+use std::fmt;
 use std::ops::Range;
 
 use crate::pseudo::Pseudonymizer;
 use crate::rule::{Context, Kind, Rule};
 
 /// One replaced value found in the input.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Finding {
     /// Byte range in the input text.
     pub span: Range<usize>,
@@ -16,7 +17,7 @@ pub struct Finding {
 }
 
 /// Output text with the position of every finding in it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Rendered {
     pub text: String,
     pub spans: Vec<RenderedSpan>,
@@ -30,6 +31,24 @@ pub struct RenderedSpan {
     pub finding: usize,
     /// False if the original was kept.
     pub replaced: bool,
+}
+
+// Debug output never includes pasted text.
+impl fmt::Debug for Finding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Finding")
+            .field("span", &self.span)
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Rendered {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Rendered")
+            .field("spans", &self.spans)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Runs a set of rules with one pseudonymizer.
@@ -275,6 +294,15 @@ mod tests {
     }
 
     #[test]
+    fn debug_does_not_expose_text() {
+        let e = engine(vec![lit(Kind::Term, "secret", "other")]);
+        let findings = e.analyze("a secret b");
+        let r = render("a secret b", &findings, |_| true);
+        let shown = format!("{findings:?} {r:?}");
+        assert!(!shown.contains("secret") && !shown.contains("other"));
+    }
+
+    #[test]
     fn noop_replacement_is_not_a_finding() {
         let e = engine(vec![lit(Kind::Term, "foo", "foo")]);
         assert!(e.analyze("foo foo").is_empty());
@@ -365,30 +393,24 @@ mod tests {
     #[test]
     fn nested_on_whole_match_terminates() {
         let e = engine(vec![Box::new(Whole)]);
-        // Depth 0..=7 each append one "!"; at depth 8 the engine's own call
-        // returns "foo" unchanged, and the outermost call adds a final "!".
-        let out = e.obfuscate("foo");
-        assert!(out.starts_with("foo!"));
-        assert!(out.len() < 40);
+        // The contexts at depths 0 to 8 each append one "!". The `nested` call
+        // made from depth 8 returns its fragment unchanged, which ends the recursion.
+        assert_eq!(e.obfuscate("foo"), format!("foo{}", "!".repeat(9)));
     }
 
     proptest! {
         #[test]
         fn output_without_findings_equals_input_without_matches(
-            text in "(\\PC|\n|\r|a|b){0,60}"
+            text in "(\\PC|\n|\r|a|b\u{e9}){0,60}"
         ) {
             let e = engine(vec![lit(Kind::Term, "a", "ZZ"), lit(Kind::Url, "b\u{e9}", "Y")]);
             let findings = e.analyze(&text);
             let r = render(&text, &findings, |_| true);
             prop_assert_eq!(&r.text, &e.obfuscate(&text));
 
-            let mut kept_in = String::new();
-            let mut pos = 0;
-            for f in &findings {
-                kept_in.push_str(&text[pos..f.span.start]);
-                pos = f.span.end;
-            }
-            kept_in.push_str(&text[pos..]);
+            // The needles cannot overlap, so removing them in turn is independent
+            // of the engine.
+            let kept_in = text.replace("b\u{e9}", "").replace('a', "");
 
             let mut kept_out = String::new();
             let mut pos = 0;
