@@ -1,5 +1,6 @@
 mod filter;
 mod setup;
+mod tui;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -19,7 +20,7 @@ struct Cli {
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
     Filter,
-    /// Interactive mode; not implemented yet (ticket 0010).
+    /// Interactive mode.
     Terminal,
 }
 
@@ -35,8 +36,17 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match mode(std::io::stdin().is_terminal()) {
         Mode::Terminal => {
-            eprintln!("sagiri: interactive mode is not available yet; pipe text into sagiri");
-            ExitCode::from(2)
+            if !std::io::stdout().is_terminal() {
+                eprintln!("sagiri: interactive mode needs a terminal");
+                return ExitCode::from(2);
+            }
+            match run_tui(cli) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("sagiri: {e:#}");
+                    ExitCode::from(1)
+                }
+            }
         }
         Mode::Filter => match run_filter(cli) {
             Ok(()) => ExitCode::SUCCESS,
@@ -46,6 +56,13 @@ fn main() -> ExitCode {
             }
         },
     }
+}
+
+fn run_tui(cli: Cli) -> anyhow::Result<()> {
+    let engine = setup::build_engine(&setup::Options {
+        key_file: cli.key_file,
+    })?;
+    tui::run(engine)
 }
 
 fn run_filter(cli: Cli) -> anyhow::Result<()> {

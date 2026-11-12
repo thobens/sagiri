@@ -21,8 +21,16 @@ sagiri < input.txt > output.txt
 ```
 
 Text on stdin is written to stdout with sensitive values replaced. The same original gets
-the same replacement on every run. Running `sagiri` with a terminal on stdin prints a hint
-and exits with status 2 until interactive mode exists.
+the same replacement on every run. Running `sagiri` with a terminal on stdin starts the
+interactive UI: paste a text (terminal paste or `Ctrl+V`), see the obfuscated version next
+to it, press `y` or `Enter` to copy it, `x` to clear, `q` to quit. Scrolling uses the arrow
+keys, `hjkl`, `PgUp`, `PgDn`, `g` and `G`. Without a terminal on stdout, interactive mode
+exits with status 2.
+
+Clipboard note: on Linux the clipboard content is served by the Sagiri process that set it.
+Without a clipboard manager, the copied text can disappear when Sagiri exits. Terminals
+without bracketed paste deliver a paste as key presses that trigger key bindings; use
+`Ctrl+V` there.
 
 The secret key is stored in `$XDG_DATA_HOME/sagiri/key` (default
 `~/.local/share/sagiri/key`) and is created on first use with mode 0600. `--key-file <PATH>`

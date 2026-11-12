@@ -1,7 +1,7 @@
 ---
 id: "0010"
 title: "TUI: paste, obfuscate, copy"
-status: todo
+status: done
 depends_on: ["0005"]
 ---
 
