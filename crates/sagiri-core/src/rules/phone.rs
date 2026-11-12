@@ -117,7 +117,10 @@ fn parse(text: &str, start: usize) -> Option<Parsed> {
     let (end, n, zero_group) = ends
         .into_iter()
         .rev()
-        .find(|(_, n, _)| (MIN_DIGITS..=MAX_DIGITS).contains(n))?;
+        // Never stop where a digit follows (possible after a `)`).
+        .find(|(end, n, _)| {
+            (MIN_DIGITS..=MAX_DIGITS).contains(n) && !b.get(*end).is_some_and(u8::is_ascii_digit)
+        })?;
     digits.truncate(n);
     Some(Parsed {
         end,
@@ -269,7 +272,7 @@ mod tests {
         let e = engine();
         for (cc, ndigits) in [("1", 10), ("41", 9), ("353", 9)] {
             for n in 0..300u32 {
-                let national = 1_000_000_000 + n * 7919;
+                let national = u64::from(n) * 3_333_333_337 % 9_000_000_000 + 1_000_000_000;
                 let input = format!("+{cc} {}", &national.to_string()[..ndigits]);
                 let out = e.obfuscate(&input);
                 let d = digits(&out);
@@ -291,7 +294,7 @@ mod tests {
             "++41791234567",
             "079 123 45 67",
             "0041 79 123 45 67",
-            "+4179123456789012",
+            "+4412345678901234",
             "+41  79 123 45 67",
             "+4 1791234567",
             "+41 7912",
@@ -332,7 +335,7 @@ mod tests {
         let r = PhoneRule.detect(t);
         assert_eq!(&t[r[0].clone()], "+41 79 123 45 67");
         // A contiguous run over 15 digits stays rejected.
-        assert!(PhoneRule.detect("+4179123456789012").is_empty());
+        assert!(PhoneRule.detect("+4412345678901234").is_empty());
     }
 
     #[test]
@@ -341,6 +344,21 @@ mod tests {
         let t = "Call +1 415 555 0132 24 hours";
         let r = PhoneRule.detect(t);
         assert_eq!(&t[r[0].clone()], "+1 415 555 0132 24");
+        // A following parenthesised group is absorbed too.
+        let t = "+41 79 123 45 67 (2024)";
+        assert_eq!(PhoneRule.detect(t), vec![0..t.len()]);
+    }
+
+    #[test]
+    fn fallback_never_stops_before_a_digit() {
+        let t = "+41 79 123 (45)6789012345";
+        // The boundary after `(45)` is followed by a digit, so it is skipped.
+        // The earlier boundaries have fewer than 8 digits, so nothing is detected.
+        assert!(PhoneRule.detect(t).is_empty());
+        assert_eq!(engine().obfuscate(t), t);
+        // With a valid earlier boundary the match stops there.
+        let t = "+41 79 123 456 (45)6789012345";
+        assert_eq!(PhoneRule.detect(t), vec![0.."+41 79 123 456".len()]);
     }
 
     #[test]

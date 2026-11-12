@@ -56,9 +56,11 @@ at its pinned position.
 - Grouping: a parenthesised group counts like any other group, so `+41 79 123 45 (67)`
   matches whole and the match then ends on `)`. If a grouped number runs past 15 digits,
   the match is the longest prefix that ends at a group boundary and has 8 to 15 digits; a
-  single digit run over 15 digits is rejected. Known limitation: a following number
-  separated by one space joins the match as a group (`+1 415 555 0132 24 hours` matches
-  `+1 415 555 0132 24`).
+  single digit run over 15 digits is rejected. The fallback never overrides "not followed
+  by a digit": a boundary directly followed by a digit is skipped. Known limitation: a
+  following number or parenthesised group separated by one space joins the match as a
+  group (`+1 415 555 0132 24 hours` matches `+1 415 555 0132 24`;
+  `+41 79 123 45 67 (2024)` matches whole).
 
 ## Acceptance criteria
 
