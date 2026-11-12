@@ -141,9 +141,9 @@ fn run_from(text: &str, start: usize) -> (usize, usize) {
     (end, digits)
 }
 
-/// True if `at` is a single space or hyphen directly followed by a digit.
+/// True if `at` is a hyphen directly followed by a digit (a hyphen joins, a space separates).
 fn sep_digit_at(b: &[u8], at: usize) -> bool {
-    matches!(b.get(at), Some(b' ' | b'-')) && b.get(at + 1).is_some_and(u8::is_ascii_digit)
+    b.get(at) == Some(&b'-') && b.get(at + 1).is_some_and(u8::is_ascii_digit)
 }
 
 /// Detects and replaces payment card numbers.
@@ -171,9 +171,8 @@ impl Rule for PaymentCardRule {
             // Not the fraction of a decimal number: `<digit>.` or `<digit>,` before.
             let decimal_before =
                 i >= 2 && matches!(b[i - 1], b'.' | b',') && b[i - 2].is_ascii_digit();
-            // Not the tail of a longer grouped number: `<digit><sep>` before.
-            let joined_before =
-                i >= 2 && matches!(b[i - 1], b' ' | b'-') && b[i - 2].is_ascii_digit();
+            // Not the tail of a longer hyphenated number: `<digit>-` before.
+            let joined_before = i >= 2 && b[i - 1] == b'-' && b[i - 2].is_ascii_digit();
             let (end, digits) = run_from(text, i);
             let contiguous = text[i..end].bytes().all(|c| c.is_ascii_digit());
             let next_alnum = text[end..]
@@ -182,7 +181,7 @@ impl Rule for PaymentCardRule {
                 .is_some_and(char::is_alphanumeric);
             let decimal_after = matches!(b.get(end), Some(b'.' | b','))
                 && b.get(end + 1).is_some_and(u8::is_ascii_digit);
-            // A contiguous number directly followed by `<sep><digit>` is part of
+            // A contiguous number directly followed by `-<digit>` is part of
             // something longer.
             let joined_after = contiguous && sep_digit_at(b, end);
             let blocked = decimal_before || joined_before || next_alnum || decimal_after;
@@ -312,7 +311,7 @@ mod tests {
             "4111 1111 1111 1111 1111",
             "1234 4111 1111 1111 1111",
             "4111111111111111-5",
-            "5 4111111111111111",
+            "5-4111111111111111",
         ] {
             assert!(e.analyze(s).is_empty(), "{s}");
         }
@@ -326,6 +325,19 @@ mod tests {
         assert_eq!(f[0].original, "4111 1111 1111 1111");
         let f = e.analyze("4111111111111111.");
         assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn contiguous_card_next_to_space_and_digit_is_detected() {
+        let e = engine();
+        for (text, want) in [
+            ("4111111111111111 12/25", "4111111111111111"),
+            ("5 4111111111111111", "4111111111111111"),
+        ] {
+            let f = e.analyze(text);
+            assert_eq!(f.len(), 1, "{text}");
+            assert_eq!(f[0].original, want);
+        }
     }
 
     #[test]

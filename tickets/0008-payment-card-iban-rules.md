@@ -91,10 +91,11 @@ downstream.
   later group 3-6 digits (4-4-4-4, 4-6-5, 4-6-4, 4-4-4-4-3, 4-4-5), joined by one separator
   style. The candidate is the maximal run of qualifying groups; no shorter prefix and no
   later start group is tried, so a run that is not a valid card as a whole is not detected
-  (`4111 1111 1111 1111 1111`, `1234 4111 1111 1111 1111`). A contiguous number directly
-  followed or preceded by a single space or hyphen plus a digit is not detected
-  (`4111111111111111-5`). `4111 1111 1111 1111 12/25` is detected without `12`, which is
-  too short to join the run.
+  (`4111 1111 1111 1111 1111`, `1234 4111 1111 1111 1111`). A hyphen joins tokens, a space
+  separates them: a number directly preceded or followed by `-<digit>` (or `<digit>-`) is
+  not detected (`4111111111111111-5`, `5-4111111111111111`), but one next to a space plus a
+  digit is (`4111111111111111 12/25` and `5 4111111111111111` detect the card only).
+  `4111 1111 1111 1111 12/25` is detected without `12`, which is too short to join the run.
 
 ## Acceptance criteria
 
