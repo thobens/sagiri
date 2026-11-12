@@ -20,7 +20,7 @@ const TAB_WIDTH: usize = 4;
 fn is_unsafe(c: char) -> bool {
     c.is_control()
         || matches!(c,
-            '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            '\u{ad}' | '\u{34f}' | '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{e0000}'..='\u{e007f}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
             | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}'
             | '\u{fff9}'..='\u{fffb}')
 }
@@ -276,9 +276,9 @@ mod tests {
 
     #[test]
     fn format_characters_are_not_rendered() {
-        let app = pasted("a\u{202e}b\u{200b}c\u{61c}d\u{180e}");
+        let app = pasted("a\u{202e}b\u{200b}c\u{61c}d\u{180e}\u{34f}\u{3164}\u{e0041}");
         let buf = render(&app, 120, 30);
-        assert!(find(&buf, "a·b·c·d·").is_some());
+        assert!(find(&buf, "a·b·c·d····").is_some());
         assert!(!rows(&buf).iter().any(|r| r.contains('\u{202e}')));
     }
 
