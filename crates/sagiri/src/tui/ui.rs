@@ -20,12 +20,13 @@ const TAB_WIDTH: usize = 4;
 fn is_unsafe(c: char) -> bool {
     c.is_control()
         || matches!(c,
-            '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}')
+            '\u{ad}' | '\u{61c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}')
 }
 
 /// Columns a char takes on screen after the display rules (a tab is four spaces, any other
-/// control character is one `·`).
+/// control or invisible format character is one `·`).
 fn char_width(c: char) -> usize {
     match c {
         '\t' => TAB_WIDTH,
@@ -275,9 +276,9 @@ mod tests {
 
     #[test]
     fn format_characters_are_not_rendered() {
-        let app = pasted("a\u{202e}b\u{200b}c");
+        let app = pasted("a\u{202e}b\u{200b}c\u{61c}d\u{180e}");
         let buf = render(&app, 120, 30);
-        assert!(find(&buf, "a·b·c").is_some());
+        assert!(find(&buf, "a·b·c·d·").is_some());
         assert!(!rows(&buf).iter().any(|r| r.contains('\u{202e}')));
     }
 
