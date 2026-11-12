@@ -68,3 +68,49 @@ fn same_address_twice_in_a_text_gets_same_replacement() {
         format!("a {single} b {single}")
     );
 }
+
+#[test]
+fn must_match_through_default_engine() {
+    let e = test_engine();
+    let cases = [
+        ("<john@acme.com>", "john@acme.com"),
+        ("mailto:john@acme.com", "john@acme.com"),
+        ("\"john@acme.com\"", "john@acme.com"),
+        ("Contact john@acme.com.", "john@acme.com"),
+        ("john@acme.com,", "john@acme.com"),
+        ("git@github.com:org/repo.git", "git@github.com"),
+        (".john@acme.com", "john@acme.com"),
+        ("john..doe@acme.com", "doe@acme.com"),
+    ];
+    for (text, want) in cases {
+        let emails: Vec<_> = e
+            .analyze(text)
+            .into_iter()
+            .filter(|f| f.kind == Kind::Email)
+            .collect();
+        assert_eq!(emails.len(), 1, "{text}");
+        assert_eq!(emails[0].original, want, "{text}");
+    }
+}
+
+#[test]
+fn must_not_match_through_default_engine() {
+    let e = test_engine();
+    for text in [
+        "@mention",
+        "foo@bar",
+        "a@b.c",
+        "icon@2x.png",
+        "user@localhost",
+        "john.@acme.com",
+        "user@[10.0.0.1]",
+        "éjohn@acme.com",
+        "müller@acme.com",
+        "john@acme.com.é",
+    ] {
+        assert!(
+            e.analyze(text).iter().all(|f| f.kind != Kind::Email),
+            "{text}"
+        );
+    }
+}
