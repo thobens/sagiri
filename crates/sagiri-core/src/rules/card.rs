@@ -174,16 +174,15 @@ impl Rule for PaymentCardRule {
             // Not the tail of a longer hyphenated number: `<digit>-` before.
             let joined_before = i >= 2 && b[i - 1] == b'-' && b[i - 2].is_ascii_digit();
             let (end, digits) = run_from(text, i);
-            let contiguous = text[i..end].bytes().all(|c| c.is_ascii_digit());
             let next_alnum = text[end..]
                 .chars()
                 .next()
                 .is_some_and(char::is_alphanumeric);
             let decimal_after = matches!(b.get(end), Some(b'.' | b','))
                 && b.get(end + 1).is_some_and(u8::is_ascii_digit);
-            // A contiguous number directly followed by `-<digit>` is part of
+            // A number directly followed by `-<digit>` is part of
             // something longer.
-            let joined_after = contiguous && sep_digit_at(b, end);
+            let joined_after = sep_digit_at(b, end);
             let blocked = decimal_before || joined_before || next_alnum || decimal_after;
             if !blocked && !joined_after && (MIN_DIGITS..=MAX_DIGITS).contains(&digits) {
                 let d: Vec<u8> = text[i..end].bytes().filter(u8::is_ascii_digit).collect();
@@ -312,6 +311,10 @@ mod tests {
             "1234 4111 1111 1111 1111",
             "4111111111111111-5",
             "5-4111111111111111",
+            "4111-1111-1111-1111-5",
+            "4111-1111-1111-1111-12",
+            "4111 1111 1111 1111-5",
+            "4111 1111 1111 1111-1111",
         ] {
             assert!(e.analyze(s).is_empty(), "{s}");
         }
@@ -355,7 +358,7 @@ mod tests {
     }
 
     /// (prefix, length) pairs covering every brand and the prefix ranges.
-    const BRANDS: [(&str, usize); 32] = [
+    const BRANDS: [(&str, usize); 37] = [
         ("4", 16),
         ("4", 13),
         ("4", 19),
@@ -381,7 +384,12 @@ mod tests {
         ("3528", 16),
         ("3555", 17),
         ("3589", 19),
+        ("62", 16),
         ("62", 17),
+        ("62", 19),
+        ("6761", 14),
+        ("6762", 15),
+        ("6763", 19),
         ("5018", 13),
         ("5020", 16),
         ("5038", 17),
@@ -393,7 +401,7 @@ mod tests {
     proptest! {
         #[test]
         fn replacement_is_valid_and_differs(
-            idx in 0usize..32,
+            idx in 0usize..37,
             seed in proptest::collection::vec(0u8..10, 19),
             sep in 0u8..3,
         ) {
