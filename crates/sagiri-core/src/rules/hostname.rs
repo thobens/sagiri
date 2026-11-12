@@ -375,6 +375,11 @@ mod tests {
     }
 
     #[test]
+    fn escape_boundary_applies_outside_urls_too() {
+        assert_eq!(found("%41cme.com"), vec!["cme.com"]);
+    }
+
+    #[test]
     fn reserved_names_untouched() {
         for h in [
             "localhost",

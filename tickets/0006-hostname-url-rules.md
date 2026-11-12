@@ -110,11 +110,11 @@ pfx php pid pub service sock sql tar tgz tmp toml txt xml xz yaml yml zip zone
   | Part | Treatment |
   |---|---|
   | scheme, `://`, port | kept |
-  | userinfo | user and password separately, as for query values below but with domain `url-userinfo`: percent escapes are kept and each piece between escapes gets its own `mimic` |
+  | userinfo | user and password separately, by the escape-preserving `mimic` step described below (domain `url-userinfo`), without `ctx.nested` |
   | host, IP literal (with or without brackets) | `ctx.nested(address)` |
   | host, anything else | `hostname::pseudonymize(host, ctx)`; this also maps single-label hosts |
   | path | `ctx.nested(path)` |
-  | query | split on `&`, each pair at the first `=`. Keys are kept. A non-empty value becomes `ctx.nested(value)`; if that leaves it unchanged, `mimic("url-query", value, value)` |
+  | query | split on `&`, each pair at the first `=`. Keys are kept. A non-empty value becomes `ctx.nested(value)`; if that leaves it unchanged, the escape-preserving `mimic` step described below (domain `url-query`) |
   | fragment | `ctx.nested(fragment)` |
 
   A percent escape (`%` and two hex digits) is copied unchanged by the query-value `mimic`
@@ -149,6 +149,13 @@ pfx php pid pub service sock sql tar tgz tmp toml txt xml xz yaml yml zip zone
   limitation and belongs in the README.
 - **The tables in the acceptance criteria are authoritative.** If an entry cannot be
   satisfied without breaking another one, report it instead of dropping it.
+- **Known limitations.** A value (query value, user or password) made only of percent
+  escapes, such as `%41%42` or `%E6%9D%B1`, is left unchanged and produces no finding. The
+  `%XX` boundary applies to hostnames only: the IP rules still treat the hex character
+  before or after an escape as part of a word, so in `?p=10.0.0.5%2C10.0.0.6` only the
+  second address is replaced. Both are left for a later ticket.
+- **Escape boundary outside URLs.** Any `%` followed by two hex digits before a chain counts
+  as a boundary, also in plain text: `%41cme.com` maps `cme.com`.
 - **Pinned current behaviour, no special handling:** `10.0.0.5.nip.io` is a hostname and maps
   label-wise (`97.9.9.8.dun.io` with the test key); wildcard public-suffix rules such as
   `*.ck` are kept as suffixes.

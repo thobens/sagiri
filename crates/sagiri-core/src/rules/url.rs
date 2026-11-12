@@ -406,6 +406,33 @@ mod tests {
     }
 
     #[test]
+    fn escape_only_values_are_left_unchanged() {
+        // Known limitation, pinned so that a later ticket changes it on purpose.
+        let e = engine();
+        assert!(e.analyze("http://localhost/?q=%41%42").is_empty());
+        assert!(
+            e.analyze("http://localhost/?city=%E6%9D%B1%E4%BA%AC")
+                .is_empty()
+        );
+        assert!(
+            e.analyze("ftp://bob:%41%42%43@localhost/")
+                .iter()
+                .all(|f| f.original.contains("bob"))
+        );
+        let out = e.obfuscate("ftp://bob:%41%42%43@localhost/");
+        assert!(out.ends_with(":%41%42%43@localhost/"));
+    }
+
+    #[test]
+    fn escape_boundary_does_not_cover_ip_rules() {
+        // Known limitation: the IPv4 rule treats `C` in `%2C` as a word character.
+        let e = engine();
+        let a = e.obfuscate("10.0.0.5");
+        let out = e.obfuscate("http://localhost/?p=10.0.0.5%2C10.0.0.6");
+        assert_eq!(out, format!("http://localhost/?p={a}%2C10.0.0.6"));
+    }
+
+    #[test]
     fn userinfo_escape_is_kept() {
         let out = engine().obfuscate("ftp://bob:p%40ss@localhost/");
         let pass = out.split(':').nth(2).unwrap().split('@').next().unwrap();
