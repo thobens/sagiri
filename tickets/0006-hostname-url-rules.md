@@ -1,7 +1,7 @@
 ---
 id: "0006"
 title: Hostname and URL rules
-status: todo
+status: done
 depends_on: ["0003", "0004"]
 ---
 

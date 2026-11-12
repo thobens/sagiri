@@ -32,6 +32,11 @@ Deleting the key file changes all replacements. Keep it private.
 Exit codes: 0 success, 1 runtime error (for example input that is not valid UTF-8), 2 usage
 error.
 
+Known limitation: a bare hostname that ends in a top-level domain that is also a common
+file extension or identifier in code (`.rs`, `.py`, `.md`, `.zip`, `.id`, `.name`, `.sh`
+and similar) is not detected, so that `main.rs` and `user.name` stay untouched. The same
+name inside a URL is still replaced.
+
 ## Checks
 
 ```
