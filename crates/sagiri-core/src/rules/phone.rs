@@ -52,7 +52,7 @@ fn country_code_len(digits: &[u8]) -> Option<usize> {
 
 /// A parsed phone number starting at a `+`.
 struct Parsed {
-    /// Byte offset one past the last digit.
+    /// Byte offset one past the last byte of the match (a digit or a closing `)`).
     end: usize,
     /// All counted digits, country code first. The digit of a `(0)` group is not in here.
     digits: Vec<u8>,
