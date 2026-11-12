@@ -142,7 +142,7 @@ fn run_from(text: &str, start: usize) -> (usize, usize) {
 }
 
 /// True if `at` is a hyphen directly followed by a digit (a hyphen joins, a space separates).
-fn sep_digit_at(b: &[u8], at: usize) -> bool {
+fn hyphen_digit_at(b: &[u8], at: usize) -> bool {
     b.get(at) == Some(&b'-') && b.get(at + 1).is_some_and(u8::is_ascii_digit)
 }
 
@@ -180,9 +180,8 @@ impl Rule for PaymentCardRule {
                 .is_some_and(char::is_alphanumeric);
             let decimal_after = matches!(b.get(end), Some(b'.' | b','))
                 && b.get(end + 1).is_some_and(u8::is_ascii_digit);
-            // A number directly followed by `-<digit>` is part of
-            // something longer.
-            let joined_after = sep_digit_at(b, end);
+            // A number directly followed by `-<digit>` is part of something longer.
+            let joined_after = hyphen_digit_at(b, end);
             let blocked = decimal_before || joined_before || next_alnum || decimal_after;
             if !blocked && !joined_after && (MIN_DIGITS..=MAX_DIGITS).contains(&digits) {
                 let d: Vec<u8> = text[i..end].bytes().filter(u8::is_ascii_digit).collect();
