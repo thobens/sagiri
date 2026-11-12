@@ -414,11 +414,9 @@ mod tests {
             e.analyze("http://localhost/?city=%E6%9D%B1%E4%BA%AC")
                 .is_empty()
         );
-        assert!(
-            e.analyze("ftp://bob:%41%42%43@localhost/")
-                .iter()
-                .all(|f| f.original.contains("bob"))
-        );
+        let found = e.analyze("ftp://bob:%41%42%43@localhost/");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].original, "ftp://bob:%41%42%43@localhost/");
         let out = e.obfuscate("ftp://bob:%41%42%43@localhost/");
         assert!(out.ends_with(":%41%42%43@localhost/"));
     }
