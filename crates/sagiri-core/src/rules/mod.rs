@@ -2,6 +2,7 @@
 
 use crate::rule::Rule;
 
+pub mod email;
 pub mod hostname;
 pub mod ip;
 pub mod url;
@@ -11,6 +12,7 @@ pub mod url;
 pub fn default_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(url::UrlRule),
+        Box::new(email::EmailRule),
         Box::new(ip::Ipv4Rule),
         Box::new(ip::Ipv6Rule),
         Box::new(hostname::HostnameRule),

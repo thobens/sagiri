@@ -1,7 +1,7 @@
 ---
 id: "0007"
 title: Email address rule
-status: todo
+status: done
 depends_on: ["0006"]
 ---
 
