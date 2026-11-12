@@ -30,7 +30,7 @@ pub enum KeyError {
     )]
     InsecurePermissions { path: PathBuf },
     /// An I/O operation on the key file failed.
-    #[error("cannot access key file {}: {source}", .path.display())]
+    #[error("cannot access key file {}", .path.display())]
     Io {
         path: PathBuf,
         #[source]

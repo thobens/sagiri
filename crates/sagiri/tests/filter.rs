@@ -162,9 +162,8 @@ fn large_input() {
     let mut i = 0u32;
     while input.len() < 5 * 1024 * 1024 {
         input.push_str(&format!(
-            "2026-11-12 10:00:{:02} INFO conn from 172.55.{}.{} port {} ok\n",
+            "2026-11-12 10:00:{:02} INFO conn from 203.0.113.{} port {} ok\n",
             i % 60,
-            (i / 250) % 250,
             i % 250 + 1,
             1024 + i % 5000
         ));
@@ -174,4 +173,24 @@ fn large_input() {
     let count = |b: &[u8]| b.iter().filter(|&&c| c == b'\n').count();
     assert_eq!(count(&out), count(input.as_bytes()));
     assert_ne!(out, input.as_bytes());
+}
+
+#[test]
+fn io_error_cause_is_printed_once() {
+    let dir = TempDir::new().unwrap();
+    let blocker = dir.path().join("file");
+    fs::write(&blocker, "x").unwrap();
+    let key = blocker.join("sub/key");
+    let out = sagiri(dir.path())
+        .arg("--key-file")
+        .arg(&key)
+        .write_stdin("a b\n")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains(blocker.to_str().unwrap()));
+    assert!(stderr.contains("(os error"));
+    assert_eq!(stderr.matches("(os error").count(), 1, "{stderr}");
 }
