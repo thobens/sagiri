@@ -108,6 +108,12 @@ fn v6_never_replaced(addr: Ipv6Addr) -> bool {
     addr == Ipv6Addr::UNSPECIFIED || addr == Ipv6Addr::LOCALHOST || addr.octets()[0] == 0xff
 }
 
+/// True if [`pseudonymize_v6`] returns `addr` unchanged: a never-replaced address, or an
+/// IPv4-mapped address whose embedded address is never replaced.
+fn v6_kept(addr: Ipv6Addr) -> bool {
+    v6_never_replaced(addr) || addr.to_ipv4_mapped().is_some_and(v4_never_replaced)
+}
+
 /// Maps an IPv6 address to another one of the same category.
 /// Never-replaced addresses are returned unchanged.
 pub fn pseudonymize_v6(addr: Ipv6Addr, p: &Pseudonymizer) -> Ipv6Addr {
@@ -124,6 +130,9 @@ pub fn pseudonymize_v6(addr: Ipv6Addr, p: &Pseudonymizer) -> Ipv6Addr {
     } else if orig[0] & 0xfe == 0xfc {
         p.stream("ipv6/ula", &orig).fill(&mut out[1..]);
     } else if orig[0] & 0xe0 == 0x20 {
+        // The stream fills all 16 bytes, then the top 3 bits of the first byte are set
+        // back to the original `001` prefix, so the low 125 bits come from the stream.
+        // The golden vectors depend on this layout.
         p.stream("ipv6/global", &orig).fill(&mut out);
         out[0] = (orig[0] & 0xe0) | (out[0] & 0x1f);
     } else {
@@ -193,7 +202,7 @@ impl Rule for Ipv6Rule {
             {
                 continue;
             }
-            if Ipv6Addr::from_str(trimmed).is_ok_and(|a| !v6_never_replaced(a)) {
+            if Ipv6Addr::from_str(trimmed).is_ok_and(|a| !v6_kept(a)) {
                 out.push(start..end);
             }
         }
@@ -211,7 +220,7 @@ impl Rule for Ipv6Rule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::Engine;
+    use crate::engine::{Engine, render};
     use crate::key::Key;
 
     fn test_pseudo() -> Pseudonymizer {
@@ -300,6 +309,9 @@ mod tests {
             "::",
             "::1",
             "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:0.0.0.0",
+            "::ffff:224.0.0.251",
         ] {
             assert!(detect_all(text).is_empty(), "{text}");
             assert_eq!(engine().obfuscate(text), text);
@@ -440,16 +452,19 @@ mod tests {
         let e = engine();
         let findings = e.analyze(text);
         assert_eq!(findings.len(), 4);
-        let out = e.obfuscate(text);
-        assert_eq!(out.lines().count(), 2);
-        // Everything between findings is unchanged.
-        let mut rest = text.to_string();
-        let mut rest_out = out.clone();
-        for f in findings.iter().rev() {
-            rest.replace_range(f.span.clone(), "\u{0}");
-            let pos = rest_out.rfind(&f.replacement).unwrap();
-            rest_out.replace_range(pos..pos + f.replacement.len(), "\u{0}");
+        let r = render(text, &findings, |_| true);
+        assert_eq!(r.text, e.obfuscate(text));
+        assert_eq!(r.spans.len(), findings.len());
+        // Every gap between findings has the same bytes in input and output.
+        let (mut pos_in, mut pos_out) = (0, 0);
+        for s in &r.spans {
+            let f = &findings[s.finding];
+            assert!(s.replaced);
+            assert_eq!(r.text[s.range.clone()], f.replacement);
+            assert_eq!(r.text[pos_out..s.range.start], text[pos_in..f.span.start]);
+            pos_in = f.span.end;
+            pos_out = s.range.end;
         }
-        assert_eq!(rest, rest_out);
+        assert_eq!(r.text[pos_out..], text[pos_in..]);
     }
 }
