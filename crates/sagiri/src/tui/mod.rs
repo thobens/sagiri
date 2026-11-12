@@ -5,6 +5,7 @@ pub mod clipboard;
 pub mod ui;
 
 use std::io::stdout;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Context as _;
 use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste};
@@ -14,8 +15,15 @@ use sagiri_core::engine::Engine;
 use app::{App, action_for};
 use clipboard::SystemClipboard;
 
-/// Puts the terminal back to normal. Safe to call more than once.
+static RESTORED: AtomicBool = AtomicBool::new(false);
+
+/// Puts the terminal back to normal. Runs at most once: leaving the alternate screen twice
+/// can make some terminals restore a saved cursor position a second time, which would move
+/// the cursor above a message printed in between (the panic report).
 fn restore_terminal() {
+    if RESTORED.swap(true, Ordering::SeqCst) {
+        return;
+    }
     // Errors cannot be handled usefully while tearing down.
     let _ = execute!(stdout(), DisableBracketedPaste);
     ratatui::restore();
@@ -50,8 +58,10 @@ fn install_panic_hook() {
 /// Runs the interactive UI until the user quits.
 pub fn run(engine: Engine) -> anyhow::Result<()> {
     let mut app = App::new(engine, Box::new(SystemClipboard::new()));
-    let mut terminal = ratatui::try_init().context("cannot start the terminal UI")?;
+    // The guard comes first so that a failed init (raw mode on, alternate screen not
+    // entered) is also cleaned up.
     let _guard = TerminalGuard;
+    let mut terminal = ratatui::try_init().context("cannot start the terminal UI")?;
     install_panic_hook();
     execute!(stdout(), EnableBracketedPaste).context("cannot enable bracketed paste")?;
 

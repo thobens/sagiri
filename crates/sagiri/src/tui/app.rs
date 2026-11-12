@@ -400,6 +400,23 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn page_scroll_uses_page_size() {
+        let (mut app, _) = app();
+        paste(&mut app, "1\n2\n3\n4\n5\n6\n7\n8");
+        app.set_page_size(3);
+        app.update(Action::PageDown);
+        assert_eq!(app.v_offset(), 3);
+        app.update(Action::PageDown);
+        app.update(Action::PageDown);
+        assert_eq!(app.v_offset(), 7);
+        app.update(Action::PageUp);
+        assert_eq!(app.v_offset(), 4);
+        app.set_page_size(0);
+        app.update(Action::PageUp);
+        assert_eq!(app.v_offset(), 3);
+    }
+
+    #[test]
     fn scroll_on_empty_text_stays_zero() {
         let (mut app, _) = app();
         for a in [Action::Bottom, Action::PageDown, Action::ScrollRight] {
@@ -435,6 +452,10 @@ pub(super) mod tests {
             (key(KeyCode::PageDown), Some(Action::PageDown)),
             (ch('g'), Some(Action::Top)),
             (ch('G'), Some(Action::Bottom)),
+            (
+                Event::Key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::SHIFT)),
+                Some(Action::Bottom),
+            ),
             (key(KeyCode::Left), Some(Action::ScrollLeft)),
             (ch('h'), Some(Action::ScrollLeft)),
             (key(KeyCode::Right), Some(Action::ScrollRight)),

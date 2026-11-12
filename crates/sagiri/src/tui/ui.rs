@@ -15,12 +15,21 @@ const EMPTY_HINT: &str = "Paste text here (terminal paste or Ctrl+V)";
 const KEY_HINTS: &str = "y copy  p paste  x clear  q quit";
 const TAB_WIDTH: usize = 4;
 
+/// Control characters and invisible format characters (bidi overrides, zero-width marks)
+/// are shown as `·`, so that they cannot act on the terminal or disguise text.
+fn is_unsafe(c: char) -> bool {
+    c.is_control()
+        || matches!(c,
+            '\u{ad}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}')
+}
+
 /// Columns a char takes on screen after the display rules (a tab is four spaces, any other
 /// control character is one `·`).
 fn char_width(c: char) -> usize {
     match c {
         '\t' => TAB_WIDTH,
-        c if c.is_control() => 1,
+        c if is_unsafe(c) => 1,
         c => c.width().unwrap_or(0),
     }
 }
@@ -58,7 +67,7 @@ pub fn visible_part(line: &str, skip: usize, width: usize) -> String {
         } else if c == '\t' {
             out.push_str("    ");
             used += w;
-        } else if c.is_control() {
+        } else if is_unsafe(c) {
             out.push('·');
             used += 1;
         } else {
@@ -131,7 +140,9 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
             )
         }
     };
-    let hints_width = KEY_HINTS.len() as u16;
+    // The key hints are ASCII, so chars equal columns. They are left out when the status
+    // line is too narrow to hold them next to the message (52 columns or fewer).
+    let hints_width = KEY_HINTS.chars().count() as u16;
     if area.width > hints_width + 20 {
         let [left, right] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(hints_width)]).areas(area);
@@ -260,6 +271,14 @@ mod tests {
         assert_eq!(x, 1 + 6);
         let x = (60..120u16).find(|&x| buf[(x, 1)].symbol() == "X").unwrap();
         assert_eq!(x, 60 + 1 + 6);
+    }
+
+    #[test]
+    fn format_characters_are_not_rendered() {
+        let app = pasted("a\u{202e}b\u{200b}c");
+        let buf = render(&app, 120, 30);
+        assert!(find(&buf, "a·b·c").is_some());
+        assert!(!rows(&buf).iter().any(|r| r.contains('\u{202e}')));
     }
 
     #[test]
