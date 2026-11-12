@@ -1,7 +1,7 @@
 ---
 id: "0004"
 title: IP address rules (IPv4 + IPv6)
-status: todo
+status: done
 depends_on: ["0003"]
 ---
 
