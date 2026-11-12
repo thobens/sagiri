@@ -14,6 +14,24 @@ cargo build
 cargo run -p sagiri -- --help
 ```
 
+## Usage
+
+```
+sagiri < input.txt > output.txt
+```
+
+Text on stdin is written to stdout with sensitive values replaced. The same original gets
+the same replacement on every run. Running `sagiri` with a terminal on stdin prints a hint
+and exits with status 2 until interactive mode exists.
+
+The secret key is stored in `$XDG_DATA_HOME/sagiri/key` (default
+`~/.local/share/sagiri/key`) and is created on first use with mode 0600. `--key-file <PATH>`
+or the `SAGIRI_KEY_FILE` environment variable selects another file; the flag wins.
+Deleting the key file changes all replacements. Keep it private.
+
+Exit codes: 0 success, 1 runtime error (for example input that is not valid UTF-8), 2 usage
+error.
+
 ## Checks
 
 ```

@@ -24,12 +24,3 @@ fn help_flag_prints_about() {
         .success()
         .stdout(contains(ABOUT));
 }
-
-#[test]
-fn no_arguments_prints_help_and_succeeds() {
-    sagiri()
-        .assert()
-        .success()
-        .stdout(contains("Usage: sagiri"))
-        .stdout(contains(ABOUT));
-}

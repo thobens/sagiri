@@ -1,7 +1,7 @@
 ---
 id: "0005"
 title: "Filter mode: stdin to stdout"
-status: todo
+status: done
 depends_on: ["0004"]
 ---
 

@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Sagiri obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones."
 
 [dependencies]
+anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 sagiri-core = { version = "0.1.0", path = "../sagiri-core" }
 
@@ -16,3 +17,4 @@ workspace = true
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = { version = "3.1.4", default-features = false }
+tempfile = "3.27.0"
