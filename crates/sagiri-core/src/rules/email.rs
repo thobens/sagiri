@@ -221,6 +221,16 @@ mod tests {
     }
 
     #[test]
+    fn percent_stays_in_place() {
+        let out = map("a%b.c%d@acme.com");
+        let local = out.split_once('@').unwrap().0;
+        assert_eq!(local.len(), "a%b.c%d".len());
+        assert_eq!((local.as_bytes()[1], local.as_bytes()[3]), (b'%', b'.'));
+        assert_eq!(local.as_bytes()[5], b'%');
+        assert_ne!(local, "a%b.c%d");
+    }
+
+    #[test]
     fn reserved_domain_kept_local_replaced() {
         let out = map("jane@example.com");
         assert!(out.ends_with("@example.com"));
