@@ -34,7 +34,17 @@ fn local_start(text: &str, end: usize) -> Option<usize> {
     if tail.is_empty() || tail.ends_with('.') || tail.len() > 64 {
         return None;
     }
-    Some(end - tail.len())
+    let start = end - tail.len();
+    // A run that starts inside a word (`müller@`) is not an address.
+    if start == run_start
+        && text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+    {
+        return None;
+    }
+    Some(start)
 }
 
 /// Detects and replaces email addresses.
@@ -155,6 +165,9 @@ mod tests {
             "john@acme.com-x",
             "john@acme.comx1",
             "user@[10.0.0.1]",
+            "éjohn@acme.com",
+            "müller@acme.com",
+            "john@acme.com.é",
         ] {
             assert!(found(text).is_empty(), "{text}: {:?}", found(text));
         }
@@ -182,10 +195,18 @@ mod tests {
         let lower = map("john.doe@acme.com");
         let mixed = map("John.Doe@ACME.com");
         assert_eq!(mixed.to_ascii_lowercase(), lower.to_ascii_lowercase());
-        let (ml, md) = mixed.split_once('@').unwrap();
-        assert!(ml.starts_with(|c: char| c.is_ascii_uppercase()));
-        assert!(ml[1..4].chars().all(|c| c.is_ascii_lowercase()));
-        assert!(md.starts_with(|c: char| c.is_ascii_uppercase()));
+        let recased: String = "John.Doe@ACME.com"
+            .chars()
+            .zip(lower.chars())
+            .map(|(o, l)| {
+                if o.is_ascii_uppercase() {
+                    l.to_ascii_uppercase()
+                } else {
+                    l
+                }
+            })
+            .collect();
+        assert_eq!(mixed, recased);
     }
 
     #[test]

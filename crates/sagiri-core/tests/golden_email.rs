@@ -58,3 +58,13 @@ fn userinfo_is_not_an_email() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].kind, Kind::Url);
 }
+
+#[test]
+fn same_address_twice_in_a_text_gets_same_replacement() {
+    let e = test_engine();
+    let single = e.obfuscate("john@acme.com");
+    assert_eq!(
+        e.obfuscate("a john@acme.com b john@acme.com"),
+        format!("a {single} b {single}")
+    );
+}
