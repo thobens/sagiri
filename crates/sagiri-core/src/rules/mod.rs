@@ -2,8 +2,10 @@
 
 use crate::rule::Rule;
 
+pub mod card;
 pub mod email;
 pub mod hostname;
+pub mod iban;
 pub mod ip;
 pub mod url;
 
@@ -16,5 +18,7 @@ pub fn default_rules() -> Vec<Box<dyn Rule>> {
         Box::new(ip::Ipv4Rule),
         Box::new(ip::Ipv6Rule),
         Box::new(hostname::HostnameRule),
+        Box::new(card::PaymentCardRule),
+        Box::new(iban::IbanRule),
     ]
 }

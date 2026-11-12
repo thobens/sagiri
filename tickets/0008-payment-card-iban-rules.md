@@ -1,7 +1,7 @@
 ---
 id: "0008"
 title: Payment card and IBAN rules
-status: todo
+status: done
 depends_on: ["0003"]
 ---
 
