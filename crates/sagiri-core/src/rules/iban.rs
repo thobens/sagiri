@@ -19,7 +19,7 @@ const LENGTHS: &[(&str, usize)] = &[
     ("PL", 28), ("PS", 29), ("PT", 25), ("QA", 29), ("RO", 24), ("RS", 22), ("RU", 33),
     ("SA", 24), ("SC", 31), ("SD", 18), ("SE", 24), ("SI", 19), ("SK", 24), ("SM", 27),
     ("SO", 23), ("ST", 25), ("SV", 28), ("TL", 23), ("TN", 24), ("TR", 26), ("UA", 29),
-    ("VA", 22), ("VG", 24), ("XK", 20), ("YE", 30),
+    ("HN", 28), ("VA", 22), ("VG", 24), ("XK", 20), ("YE", 30),
 ];
 
 const MAX_LEN: usize = 33;
@@ -283,6 +283,7 @@ mod tests {
     fn registry_lengths_are_sane() {
         assert_eq!(expected_len("DE"), Some(22));
         assert_eq!(expected_len("NO"), Some(15));
+        assert_eq!(expected_len("HN"), Some(28));
         assert_eq!(expected_len("XX"), None);
         assert!(LENGTHS.iter().all(|&(_, l)| (15..=MAX_LEN).contains(&l)));
     }
@@ -293,6 +294,7 @@ mod tests {
             cc in 0usize..LENGTHS.len(),
             body in proptest::collection::vec(0u8..36, 31),
             lower in any::<bool>(),
+            spaced in any::<bool>(),
         ) {
             let (code, len) = LENGTHS[cc];
             let mut s: Vec<u8> = code.bytes().collect();
@@ -306,12 +308,29 @@ mod tests {
             prop_assert!(valid_canonical(&s));
             let mut text = String::from_utf8(s.clone()).unwrap();
             if lower { text = text.to_lowercase(); }
+            if spaced {
+                let mut g = String::new();
+                for (n, ch) in text.chars().enumerate() {
+                    if n > 0 && n % 4 == 0 {
+                        g.push(' ');
+                    }
+                    g.push(ch);
+                }
+                text = g;
+            }
             let f = engine().analyze(&text);
             prop_assert_eq!(f.len(), 1);
+            prop_assert_eq!(&f[0].original, &text);
             let r = &f[0].replacement;
             prop_assert!(valid_canonical(&canonical(r)));
             prop_assert_eq!(r.len(), text.len());
             prop_assert_eq!(&r[..2], &text[..2]);
+            for (a, b) in text.chars().zip(r.chars()) {
+                prop_assert_eq!(a == ' ', b == ' ');
+                prop_assert_eq!(a.is_ascii_digit(), b.is_ascii_digit());
+                prop_assert_eq!(a.is_ascii_lowercase(), b.is_ascii_lowercase());
+                prop_assert_eq!(a.is_ascii_uppercase(), b.is_ascii_uppercase());
+            }
         }
     }
 }

@@ -106,36 +106,44 @@ fn luhn_check_digit(d_without_last: &[u8]) -> u8 {
     b'0' + ((10 - luhn_sum(&v, true) % 10) % 10) as u8
 }
 
-/// Group end offsets starting at `start`, with cumulative digit counts. Groups are
-/// separated by single spaces or single hyphens, one style per number.
-fn groups_from(text: &str, start: usize) -> Vec<(usize, usize)> {
+/// The maximal run of digit groups starting at `start`: either one digit run (the
+/// contiguous form), or a first group of exactly 4 digits followed by groups of 3-6
+/// digits, joined by single spaces or single hyphens (one style per number). Returns the
+/// end offset and the digit count.
+fn run_from(text: &str, start: usize) -> (usize, usize) {
     let b = text.as_bytes();
-    let mut out = Vec::new();
-    let mut pos = start;
-    let mut digits = 0;
-    let mut sep: Option<u8> = None;
-    loop {
-        let gs = pos;
-        while pos < b.len() && b[pos].is_ascii_digit() {
-            pos += 1;
+    let digit_run = |from: usize| {
+        let mut p = from;
+        while p < b.len() && b[p].is_ascii_digit() {
+            p += 1;
         }
-        digits += pos - gs;
-        if digits > MAX_DIGITS {
-            break;
-        }
-        out.push((pos, digits));
-        if pos + 1 < b.len()
-            && (b[pos] == b' ' || b[pos] == b'-')
-            && sep.is_none_or(|s| s == b[pos])
-            && b[pos + 1].is_ascii_digit()
-        {
-            sep = Some(b[pos]);
-            pos += 1;
-        } else {
-            break;
-        }
+        p
+    };
+    let mut end = digit_run(start);
+    let mut digits = end - start;
+    if digits != 4 {
+        return (end, digits);
     }
-    out
+    let mut sep: Option<u8> = None;
+    while end + 1 < b.len()
+        && (b[end] == b' ' || b[end] == b'-')
+        && sep.is_none_or(|s| s == b[end])
+        && b[end + 1].is_ascii_digit()
+    {
+        let ge = digit_run(end + 1);
+        if !(3..=6).contains(&(ge - end - 1)) {
+            break;
+        }
+        sep = Some(b[end]);
+        digits += ge - end - 1;
+        end = ge;
+    }
+    (end, digits)
+}
+
+/// True if `at` is a single space or hyphen directly followed by a digit.
+fn sep_digit_at(b: &[u8], at: usize) -> bool {
+    matches!(b.get(at), Some(b' ' | b'-')) && b.get(at + 1).is_some_and(u8::is_ascii_digit)
 }
 
 /// Detects and replaces payment card numbers.
@@ -163,43 +171,29 @@ impl Rule for PaymentCardRule {
             // Not the fraction of a decimal number: `<digit>.` or `<digit>,` before.
             let decimal_before =
                 i >= 2 && matches!(b[i - 1], b'.' | b',') && b[i - 2].is_ascii_digit();
-            let mut found = None;
-            if !decimal_before {
-                for &(end, digits) in groups_from(text, i).iter().rev() {
-                    if digits < MIN_DIGITS {
-                        break;
-                    }
-                    if text[end..]
-                        .chars()
-                        .next()
-                        .is_some_and(char::is_alphanumeric)
-                    {
-                        continue;
-                    }
-                    if matches!(b.get(end), Some(b'.' | b','))
-                        && b.get(end + 1).is_some_and(u8::is_ascii_digit)
-                    {
-                        continue;
-                    }
-                    let d: Vec<u8> = text[i..end].bytes().filter(u8::is_ascii_digit).collect();
-                    if luhn_valid(&d) && brand_prefix_len(&d).is_some() {
-                        found = Some(end);
-                        break;
-                    }
-                }
-            }
-            match found {
-                Some(end) => {
+            // Not the tail of a longer grouped number: `<digit><sep>` before.
+            let joined_before =
+                i >= 2 && matches!(b[i - 1], b' ' | b'-') && b[i - 2].is_ascii_digit();
+            let (end, digits) = run_from(text, i);
+            let contiguous = text[i..end].bytes().all(|c| c.is_ascii_digit());
+            let next_alnum = text[end..]
+                .chars()
+                .next()
+                .is_some_and(char::is_alphanumeric);
+            let decimal_after = matches!(b.get(end), Some(b'.' | b','))
+                && b.get(end + 1).is_some_and(u8::is_ascii_digit);
+            // A contiguous number directly followed by `<sep><digit>` is part of
+            // something longer.
+            let joined_after = contiguous && sep_digit_at(b, end);
+            let blocked = decimal_before || joined_before || next_alnum || decimal_after;
+            if !blocked && !joined_after && (MIN_DIGITS..=MAX_DIGITS).contains(&digits) {
+                let d: Vec<u8> = text[i..end].bytes().filter(u8::is_ascii_digit).collect();
+                if luhn_valid(&d) && brand_prefix_len(&d).is_some() {
                     out.push(i..end);
-                    i = end;
-                }
-                None => {
-                    // Skip the rest of this digit run.
-                    while i < b.len() && b[i].is_ascii_digit() {
-                        i += 1;
-                    }
                 }
             }
+            // Either way the whole run is consumed: no shorter prefix, no later group.
+            i = end;
         }
         out
     }
@@ -314,6 +308,11 @@ mod tests {
             "41111111111111111111",
             "1699999999999",
             "4111 1111-1111 1111",
+            "4 49 91 44 8 88 43 75 49",
+            "4111 1111 1111 1111 1111",
+            "1234 4111 1111 1111 1111",
+            "4111111111111111-5",
+            "5 4111111111111111",
         ] {
             assert!(e.analyze(s).is_empty(), "{s}");
         }
@@ -343,28 +342,48 @@ mod tests {
         assert!(!ok("4111111111111111111111"));
     }
 
-    const BRANDS: [(&str, usize); 14] = [
+    /// (prefix, length) pairs covering every brand and the prefix ranges.
+    const BRANDS: [(&str, usize); 32] = [
         ("4", 16),
         ("4", 13),
         ("4", 19),
         ("51", 16),
+        ("52", 16),
+        ("53", 16),
+        ("54", 16),
+        ("55", 16),
         ("2221", 16),
+        ("2500", 16),
+        ("2720", 16),
         ("34", 15),
         ("37", 15),
         ("6011", 16),
+        ("644", 16),
+        ("649", 17),
         ("65", 19),
         ("300", 14),
+        ("305", 15),
         ("36", 16),
+        ("38", 14),
+        ("39", 19),
         ("3528", 16),
+        ("3555", 17),
+        ("3589", 19),
         ("62", 17),
         ("5018", 13),
+        ("5020", 16),
+        ("5038", 17),
+        ("5893", 18),
+        ("6304", 19),
+        ("6759", 13),
     ];
 
     proptest! {
         #[test]
         fn replacement_is_valid_and_differs(
-            idx in 0usize..14,
+            idx in 0usize..32,
             seed in proptest::collection::vec(0u8..10, 19),
+            sep in 0u8..3,
         ) {
             let (prefix, len) = BRANDS[idx];
             let mut d: Vec<u8> = prefix.bytes().collect();
@@ -376,14 +395,33 @@ mod tests {
             let c = luhn_check_digit(&d);
             d.push(c);
             prop_assert!(luhn_valid(&d));
-            prop_assert!(brand_prefix_len(&d).is_some());
+            let pl = brand_prefix_len(&d);
+            prop_assert!(pl.is_some());
+            let pl = pl.unwrap();
             let s = String::from_utf8(d.clone()).unwrap();
             let f = engine().analyze(&s);
             prop_assert_eq!(f.len(), 1);
             let r = digits(&f[0].replacement);
             prop_assert_eq!(r.len(), d.len());
             prop_assert!(luhn_valid(&r));
-            prop_assert_ne!(r, d);
+            prop_assert!(brand_prefix_len(&r).is_some());
+            prop_assert_eq!(&r[..pl], &d[..pl]);
+            prop_assert_ne!(&r, &d);
+            // The same number in groups of four gets the same digits. A trailing group
+            // of 1-2 digits is too short to join the run, so those lengths are skipped.
+            if sep > 0 && len >= 16 && (len % 4 == 0 || len % 4 >= 3) {
+                let j = if sep == 1 { ' ' } else { '-' };
+                let mut g = String::new();
+                for (n, ch) in s.chars().enumerate() {
+                    if n > 0 && n % 4 == 0 {
+                        g.push(j);
+                    }
+                    g.push(ch);
+                }
+                let fg = engine().analyze(&g);
+                prop_assert_eq!(fg.len(), 1);
+                prop_assert_eq!(digits(&fg[0].replacement), r);
+            }
         }
     }
 }

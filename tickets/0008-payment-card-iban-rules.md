@@ -87,6 +87,14 @@ downstream.
 - **The whole BBAN is replaced**, including the bank code: a bank code plus a country
   narrows an account down considerably.
 - Published test numbers are replaced like any other number. There is no keep-list.
+- **Card grouping.** In the grouped form the first group has exactly 4 digits and every
+  later group 3-6 digits (4-4-4-4, 4-6-5, 4-6-4, 4-4-4-4-3, 4-4-5), joined by one separator
+  style. The candidate is the maximal run of qualifying groups; no shorter prefix and no
+  later start group is tried, so a run that is not a valid card as a whole is not detected
+  (`4111 1111 1111 1111 1111`, `1234 4111 1111 1111 1111`). A contiguous number directly
+  followed or preceded by a single space or hyphen plus a digit is not detected
+  (`4111111111111111-5`). `4111 1111 1111 1111 12/25` is detected without `12`, which is
+  too short to join the run.
 
 ## Acceptance criteria
 
