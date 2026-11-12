@@ -7,6 +7,7 @@ pub mod email;
 pub mod hostname;
 pub mod iban;
 pub mod ip;
+pub mod phone;
 pub mod url;
 
 /// All built-in rules, in `Kind` order: term, url, email, ipv4, ipv6, hostname,
@@ -20,5 +21,6 @@ pub fn default_rules() -> Vec<Box<dyn Rule>> {
         Box::new(hostname::HostnameRule),
         Box::new(card::PaymentCardRule),
         Box::new(iban::IbanRule),
+        Box::new(phone::PhoneRule),
     ]
 }

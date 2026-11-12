@@ -1,7 +1,7 @@
 ---
 id: "0009"
 title: Phone number rule
-status: todo
+status: done
 depends_on: ["0003"]
 ---
 
