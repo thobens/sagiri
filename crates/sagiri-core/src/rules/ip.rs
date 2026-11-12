@@ -279,6 +279,10 @@ mod tests {
             "a.2001:db8::1",
             "2001:db8::1:",
             "2001:db8::1.com",
+            "2001:db8::1.net",
+            "2001:db8::1.org",
+            "host.10.0.0.1",
+            "x.10.0.0.1",
             "2001:db8::1g",
         ] {
             assert!(detect_all(text).is_empty(), "{text}");
