@@ -148,6 +148,9 @@ fn valid_range(text: &str, r: &Range<usize>) -> bool {
 }
 
 /// Builds the output text. Findings for which `include` is false keep their original.
+///
+/// `findings` must come from [`Engine::analyze`] on this same `text`, unmodified. Findings
+/// that are unsorted, overlapping or out of range for `text` make this function panic.
 pub fn render(text: &str, findings: &[Finding], include: impl Fn(&Finding) -> bool) -> Rendered {
     let mut out = String::with_capacity(text.len());
     let mut spans = Vec::with_capacity(findings.len());
@@ -333,6 +336,7 @@ mod tests {
             for (i, s) in r.spans.iter().enumerate() {
                 assert_eq!(s.finding, i);
                 let f = &findings[s.finding];
+                assert_eq!(s.replaced, pred(f));
                 let want = if s.replaced {
                     &f.replacement
                 } else {
