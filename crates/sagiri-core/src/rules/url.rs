@@ -379,7 +379,7 @@ mod tests {
         let (label, rest) = host.split_once('.').unwrap();
         assert_eq!(
             label,
-            format!("{}{}", &bare_label[..1].to_uppercase(), &bare_label[1..])
+            format!("{}{}", bare_label[..1].to_uppercase(), &bare_label[1..])
         );
         assert_eq!(rest.to_lowercase(), bare_rest);
         assert!(host.ends_with(".COM"));

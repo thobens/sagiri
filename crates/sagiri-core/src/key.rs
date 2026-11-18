@@ -145,10 +145,10 @@ fn load(path: &Path) -> Result<Key, KeyError> {
         return Err(malformed());
     }
     let mut bytes = Zeroizing::new([0u8; KEY_LEN]);
-    for (i, pair) in buf[..KEY_LEN * 2].chunks_exact(2).enumerate() {
-        let hi = nibble(pair[0]).ok_or_else(malformed)?;
-        let lo = nibble(pair[1]).ok_or_else(malformed)?;
-        bytes[i] = hi << 4 | lo;
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        let hi = nibble(buf[2 * i]).ok_or_else(malformed)?;
+        let lo = nibble(buf[2 * i + 1]).ok_or_else(malformed)?;
+        *byte = hi << 4 | lo;
     }
     Ok(Key::from_bytes(*bytes))
 }
