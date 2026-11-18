@@ -95,9 +95,9 @@ impl Context<'_> {
         self.engine.obfuscate_at(fragment, self.depth + 1)
     }
 
-    /// True if the user's allowlist covers `value`. Always false until ticket 0012.
-    pub fn is_allowed(&self, _value: &str) -> bool {
-        false
+    /// True if the user's allowlist covers `value`.
+    pub fn is_allowed(&self, value: &str) -> bool {
+        self.engine.is_allowed(value)
     }
 }
 

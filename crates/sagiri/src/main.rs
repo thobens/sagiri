@@ -15,6 +15,10 @@ struct Cli {
     /// Key file to use instead of `SAGIRI_KEY_FILE` or the default location.
     #[arg(long, global = true, value_name = "PATH")]
     key_file: Option<PathBuf>,
+
+    /// Config file to use instead of `SAGIRI_CONFIG` or the default location.
+    #[arg(long, global = true, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -61,6 +65,7 @@ fn main() -> ExitCode {
 fn run_tui(cli: Cli) -> anyhow::Result<()> {
     let engine = setup::build_engine(&setup::Options {
         key_file: cli.key_file,
+        config: cli.config,
     })?;
     tui::run(engine)
 }
@@ -68,6 +73,7 @@ fn run_tui(cli: Cli) -> anyhow::Result<()> {
 fn run_filter(cli: Cli) -> anyhow::Result<()> {
     let engine = setup::build_engine(&setup::Options {
         key_file: cli.key_file,
+        config: cli.config,
     })?;
     filter::run(&engine, std::io::stdin().lock(), std::io::stdout().lock())
 }

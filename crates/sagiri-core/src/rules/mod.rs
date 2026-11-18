@@ -8,10 +8,12 @@ pub mod hostname;
 pub mod iban;
 pub mod ip;
 pub mod phone;
+pub mod term;
 pub mod url;
 
-/// All built-in rules, in `Kind` order: term, url, email, ipv4, ipv6, hostname,
-/// payment_card, iban, phone.
+/// All built-in rules, in `Kind` order: url, email, ipv4, ipv6, hostname,
+/// payment_card, iban, phone. The term rule is not included: it needs the user's terms
+/// and is built with [`term::TermRule::new`].
 pub fn default_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(url::UrlRule),

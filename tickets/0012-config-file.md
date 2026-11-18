@@ -1,7 +1,7 @@
 ---
 id: "0012"
 title: Config file
-status: todo
+status: done
 depends_on: ["0005", "0007"]
 ---
 

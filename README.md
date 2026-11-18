@@ -45,6 +45,44 @@ file extension or identifier in code (`.rs`, `.py`, `.md`, `.zip`, `.id`, `.name
 and similar) is not detected, so that `main.rs` and `user.name` stay untouched. The same
 name inside a URL is still replaced.
 
+## Configuration
+
+An optional TOML file teaches Sagiri what it cannot detect on its own. The location is the
+first of:
+
+1. `--config <PATH>`
+2. the `SAGIRI_CONFIG` environment variable, if set and not empty
+3. `$XDG_CONFIG_HOME/sagiri/config.toml` (default `~/.config/sagiri/config.toml`)
+
+A path given by flag or environment variable must exist. A missing file at the XDG path
+means that all defaults apply.
+
+```toml
+# Values that are never replaced.
+allow = ["intranet.acme.com", "*.github.com", "10.20.0.0/16", "192.0.2.7"]
+
+# Literal terms that are always replaced.
+terms = ["Acme Corp", "Project Falcon"]
+
+# Rules are on unless switched off here.
+[rules]
+phone = false
+```
+
+- `allow` entries are exact values (case-insensitive; IP addresses compare as addresses),
+  subdomain wildcards (`*.github.com` matches `api.github.com` but not `github.com`), or IP
+  networks in CIDR notation. An allowed value is checked as a whole: `github.com` keeps
+  `https://github.com/org/repo` but not `api.github.com`. In an email address an allowed
+  domain is kept and the local part is still replaced.
+- `terms` are matched literally, ignoring case, as whole words. They need at least two
+  characters.
+- `[rules]` accepts `term`, `url`, `email`, `ipv4`, `ipv6`, `hostname`, `payment_card`,
+  `iban` and `phone`.
+- Unknown keys are errors, so that a typo does not silently disable protection.
+
+Warning: the config file contains the sensitive terms in plain text. Do not share it and do
+not commit it to a repository.
+
 ## Checks
 
 ```

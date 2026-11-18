@@ -30,7 +30,7 @@ fn dot_then_alnum(text: &str, end: usize) -> bool {
 }
 
 /// Parses dotted decimal, accepting leading zeros (read as decimal).
-fn parse_v4_lenient(s: &str) -> Option<Ipv4Addr> {
+pub(crate) fn parse_v4_lenient(s: &str) -> Option<Ipv4Addr> {
     let mut octets = [0u8; 4];
     let mut parts = s.split('.');
     for o in &mut octets {

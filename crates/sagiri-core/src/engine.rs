@@ -3,6 +3,7 @@
 use std::fmt;
 use std::ops::Range;
 
+use crate::config::Allowlist;
 use crate::pseudo::Pseudonymizer;
 use crate::rule::{Context, Kind, Rule};
 
@@ -55,6 +56,7 @@ impl fmt::Debug for Rendered {
 pub struct Engine {
     pseudo: Pseudonymizer,
     rules: Vec<Box<dyn Rule>>,
+    allow: Allowlist,
 }
 
 struct Candidate {
@@ -64,7 +66,17 @@ struct Candidate {
 
 impl Engine {
     pub fn new(pseudo: Pseudonymizer, rules: Vec<Box<dyn Rule>>) -> Self {
-        Engine { pseudo, rules }
+        Engine {
+            pseudo,
+            rules,
+            allow: Allowlist::empty(),
+        }
+    }
+
+    /// Keeps every value that the allowlist covers.
+    pub fn with_allowlist(mut self, allow: Allowlist) -> Self {
+        self.allow = allow;
+        self
     }
 
     pub fn context(&self) -> Context<'_> {
@@ -76,6 +88,10 @@ impl Engine {
 
     pub(crate) fn pseudo(&self) -> &Pseudonymizer {
         &self.pseudo
+    }
+
+    pub(crate) fn is_allowed(&self, value: &str) -> bool {
+        self.allow.matches(value)
     }
 
     /// Finds all values to replace, sorted by start, without overlaps.
@@ -124,6 +140,9 @@ impl Engine {
             accepted_end = c.range.end;
             let rule = &self.rules[c.rule];
             let original = &text[c.range.clone()];
+            if self.allow.matches(original) {
+                continue;
+            }
             let replacement = rule.replace(original, &ctx);
             if replacement == original || replacement.contains(['\n', '\r']) {
                 continue;

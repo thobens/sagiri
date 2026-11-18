@@ -1,0 +1,588 @@
+//! The config file: allowlist, terms and rule toggles.
+//!
+//! Error messages name the file, the key or array index and the position. They never
+//! contain a value from the file.
+
+use std::ffi::OsString;
+use std::fmt;
+use std::net::{IpAddr, Ipv6Addr};
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+
+use serde::Deserialize;
+
+use crate::paths::{self, PathError};
+use crate::rule::Kind;
+use crate::rules::ip::parse_v4_lenient;
+
+/// Errors loading or validating the config.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    /// A config file named by flag or environment variable does not exist.
+    #[error("config file {} does not exist", .0.display())]
+    NotFound(PathBuf),
+    /// The file exists but cannot be read.
+    #[error("cannot read config file {}: {kind}", .path.display())]
+    Read {
+        path: PathBuf,
+        kind: std::io::ErrorKind,
+    },
+    /// Syntax error or wrong structure in the TOML.
+    #[error("{}: line {line}, column {column}: {detail}", .path.display())]
+    Toml {
+        path: PathBuf,
+        line: usize,
+        column: usize,
+        detail: String,
+    },
+    /// An entry in `allow` or `terms` is not usable.
+    #[error("{}{key}: {reason}", PathPrefix(.path))]
+    Invalid {
+        path: Option<PathBuf>,
+        /// For example `allow[2]`.
+        key: String,
+        reason: &'static str,
+    },
+    /// The default config location cannot be determined.
+    #[error("cannot locate the config file: {0}")]
+    Path(#[from] PathError),
+}
+
+struct PathPrefix<'a>(&'a Option<PathBuf>);
+
+impl fmt::Display for PathPrefix<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(p) => write!(f, "{}: ", p.display()),
+            None => Ok(()),
+        }
+    }
+}
+
+impl ConfigError {
+    pub(crate) fn invalid(key: String, reason: &'static str) -> Self {
+        ConfigError::Invalid {
+            path: None,
+            key,
+            reason,
+        }
+    }
+
+    fn with_path(self, file: &Path) -> Self {
+        match self {
+            ConfigError::Invalid {
+                path: None,
+                key,
+                reason,
+            } => ConfigError::Invalid {
+                path: Some(file.to_path_buf()),
+                key,
+                reason,
+            },
+            other => other,
+        }
+    }
+}
+
+/// The parsed config file. Every field has a default.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Config {
+    /// Values that are never replaced.
+    pub allow: Vec<String>,
+    /// Literal terms that are always replaced.
+    pub terms: Vec<String>,
+    pub rules: RuleToggles,
+}
+
+/// One switch per rule. Rules are on unless switched off.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RuleToggles {
+    pub term: bool,
+    pub url: bool,
+    pub email: bool,
+    pub ipv4: bool,
+    pub ipv6: bool,
+    pub hostname: bool,
+    pub payment_card: bool,
+    pub iban: bool,
+    pub phone: bool,
+}
+
+impl Default for RuleToggles {
+    fn default() -> Self {
+        RuleToggles {
+            term: true,
+            url: true,
+            email: true,
+            ipv4: true,
+            ipv6: true,
+            hostname: true,
+            payment_card: true,
+            iban: true,
+            phone: true,
+        }
+    }
+}
+
+impl RuleToggles {
+    /// True if the rule for `kind` is switched on.
+    pub fn enabled(&self, kind: Kind) -> bool {
+        match kind {
+            Kind::Term => self.term,
+            Kind::Url => self.url,
+            Kind::Email => self.email,
+            Kind::Ipv4 => self.ipv4,
+            Kind::Ipv6 => self.ipv6,
+            Kind::Hostname => self.hostname,
+            Kind::PaymentCard => self.payment_card,
+            Kind::Iban => self.iban,
+            Kind::Phone => self.phone,
+        }
+    }
+}
+
+impl Config {
+    /// Reads and validates the file at `path`.
+    pub fn load(path: &Path) -> Result<Config, ConfigError> {
+        let src = std::fs::read_to_string(path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ConfigError::NotFound(path.to_path_buf()),
+            kind => ConfigError::Read {
+                path: path.to_path_buf(),
+                kind,
+            },
+        })?;
+        let config = parse(&src, path)?;
+        // Validate entries now so that errors name the file.
+        Allowlist::new(&config.allow).map_err(|e| e.with_path(path))?;
+        crate::rules::term::validate_terms(&config.terms).map_err(|e| e.with_path(path))?;
+        Ok(config)
+    }
+}
+
+/// Where the config file is: the flag, else `SAGIRI_CONFIG`, else the XDG path.
+///
+/// `None` means that there is no file and the defaults apply. A file named by flag or
+/// environment variable must exist; a missing file at the XDG path is not an error.
+pub fn resolve_path(
+    flag: Option<&Path>,
+    env: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<Option<PathBuf>, ConfigError> {
+    let explicit = match flag {
+        Some(p) => Some(p.to_path_buf()),
+        None => env("SAGIRI_CONFIG")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from),
+    };
+    if let Some(p) = explicit {
+        return if p.exists() {
+            Ok(Some(p))
+        } else {
+            Err(ConfigError::NotFound(p))
+        };
+    }
+    let p = paths::config_dir_with(env)?.join("config.toml");
+    Ok(p.exists().then_some(p))
+}
+
+fn position(src: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(src.len());
+    let before = src.get(..offset).unwrap_or("");
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    (line, column)
+}
+
+fn parse(src: &str, path: &Path) -> Result<Config, ConfigError> {
+    let err = |offset: Option<usize>, detail: String| {
+        let (line, column) = position(src, offset.unwrap_or(0));
+        ConfigError::Toml {
+            path: path.to_path_buf(),
+            line,
+            column,
+            detail,
+        }
+    };
+    let table: toml::Table =
+        toml::from_str(src).map_err(|e| err(e.span().map(|s| s.start), e.message().to_string()))?;
+    toml::from_str::<Config>(src).map_err(|e| {
+        let start = e.span().map(|s| s.start);
+        // The message of an unknown field names only the key. Other messages quote the
+        // offending value, so they are replaced by one that names the key.
+        let detail = if e.message().starts_with("unknown field") {
+            e.message().to_string()
+        } else if let Some((key, expected)) = locate_type_error(&table) {
+            format!("`{key}`: {expected}")
+        } else {
+            "invalid value".to_string()
+        };
+        err(start, detail)
+    })
+}
+
+/// The key (or array element) with a wrong type, and what was expected there.
+fn locate_type_error(table: &toml::Table) -> Option<(String, &'static str)> {
+    for key in ["allow", "terms"] {
+        match table.get(key) {
+            None => {}
+            Some(toml::Value::Array(items)) => {
+                if let Some(i) = items.iter().position(|v| !v.is_str()) {
+                    return Some((format!("{key}[{i}]"), "expected a string"));
+                }
+            }
+            Some(_) => return Some((key.to_string(), "expected an array of strings")),
+        }
+    }
+    match table.get("rules") {
+        None => {}
+        Some(toml::Value::Table(rules)) => {
+            for kind in Kind::ALL {
+                if rules.get(kind.id()).is_some_and(|v| !v.is_bool()) {
+                    return Some((format!("rules.{}", kind.id()), "expected a boolean"));
+                }
+            }
+        }
+        Some(_) => return Some(("rules".to_string(), "expected a table")),
+    }
+    None
+}
+
+enum Entry {
+    /// Lower-case text and its address, if it is one.
+    Exact(String, Option<IpAddr>),
+    /// `.d` for `*.d`, lower-case.
+    Subdomains(String),
+    Network(IpAddr, u8),
+}
+
+/// Values that are never replaced.
+pub struct Allowlist {
+    entries: Vec<Entry>,
+}
+
+// Never prints entries.
+impl fmt::Debug for Allowlist {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Allowlist")
+            .field("entries", &self.entries.len())
+            .finish()
+    }
+}
+
+fn parse_ip(s: &str) -> Option<IpAddr> {
+    parse_v4_lenient(s)
+        .map(IpAddr::V4)
+        .or_else(|| Ipv6Addr::from_str(s).ok().map(IpAddr::V6))
+}
+
+fn parse_network(s: &str) -> Option<(IpAddr, u8)> {
+    let (addr, bits) = s.split_once('/')?;
+    let addr = parse_ip(addr)?;
+    if bits.is_empty() || bits.len() > 3 || !bits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let bits: u8 = bits.parse().ok()?;
+    let max = if addr.is_ipv4() { 32 } else { 128 };
+    (bits <= max).then_some((addr, bits))
+}
+
+fn in_network(addr: IpAddr, net: IpAddr, bits: u8) -> bool {
+    match (addr, net) {
+        (IpAddr::V4(a), IpAddr::V4(n)) => {
+            let mask = u32::MAX.checked_shl(32 - u32::from(bits)).unwrap_or(0);
+            u32::from(a) & mask == u32::from(n) & mask
+        }
+        (IpAddr::V6(a), IpAddr::V6(n)) => {
+            let mask = u128::MAX.checked_shl(128 - u32::from(bits)).unwrap_or(0);
+            u128::from(a) & mask == u128::from(n) & mask
+        }
+        _ => false,
+    }
+}
+
+impl Allowlist {
+    /// An allowlist that matches nothing.
+    pub fn empty() -> Self {
+        Allowlist {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Builds the list from `Config::allow`. An invalid entry is an error naming
+    /// `allow[index]`.
+    pub fn new(entries: &[String]) -> Result<Self, ConfigError> {
+        let mut out = Vec::with_capacity(entries.len());
+        for (i, raw) in entries.iter().enumerate() {
+            let bad = |reason| ConfigError::invalid(format!("allow[{i}]"), reason);
+            let e = raw.trim();
+            if e.is_empty() {
+                return Err(bad("empty entry"));
+            }
+            if e.contains(['\n', '\r']) {
+                return Err(bad("entry contains a line break"));
+            }
+            if e.contains('/') {
+                let (addr, bits) = parse_network(e).ok_or_else(|| bad("malformed network"))?;
+                out.push(Entry::Network(addr, bits));
+            } else if let Some(domain) = e.strip_prefix("*.") {
+                let valid = !domain.is_empty()
+                    && !domain.starts_with('.')
+                    && !domain.ends_with('.')
+                    && domain
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'));
+                if !valid {
+                    return Err(bad("malformed wildcard"));
+                }
+                out.push(Entry::Subdomains(format!(
+                    ".{}",
+                    domain.to_ascii_lowercase()
+                )));
+            } else {
+                out.push(Entry::Exact(e.to_ascii_lowercase(), parse_ip(e)));
+            }
+        }
+        Ok(Allowlist { entries: out })
+    }
+
+    /// True if the whole `value` is covered by an entry.
+    pub fn matches(&self, value: &str) -> bool {
+        if self.entries.is_empty() {
+            return false;
+        }
+        let lower = value.to_ascii_lowercase();
+        let host = lower.strip_suffix('.').unwrap_or(&lower);
+        let ip = parse_ip(value);
+        self.entries.iter().any(|e| match e {
+            Entry::Exact(s, eip) => *s == lower || (ip.is_some() && ip == *eip),
+            Entry::Subdomains(suffix) => host.len() > suffix.len() && host.ends_with(suffix),
+            Entry::Network(net, bits) => ip.is_some_and(|a| in_network(a, *net, *bits)),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::fs;
+
+    fn load_str(src: &str) -> Result<Config, ConfigError> {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("config.toml");
+        fs::write(&p, src).unwrap();
+        Config::load(&p)
+    }
+
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let m: HashMap<String, OsString> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), OsString::from(v)))
+            .collect();
+        move |k| m.get(k).cloned()
+    }
+
+    #[test]
+    fn empty_file_gives_defaults() {
+        assert_eq!(load_str("").unwrap(), Config::default());
+        assert!(Config::default().rules.enabled(Kind::Phone));
+    }
+
+    #[test]
+    fn missing_xdg_file_gives_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let env = env_of(&[("XDG_CONFIG_HOME", dir.path().to_str().unwrap())]);
+        assert_eq!(resolve_path(None, &env).unwrap(), None);
+    }
+
+    #[test]
+    fn example_parses() {
+        let c = load_str(
+            r#"
+# Values that are never replaced.
+allow = ["intranet.acme.com", "*.github.com", "10.20.0.0/16", "192.0.2.7"]
+
+# Literal terms that are always replaced.
+terms = ["Acme Corp", "Project Falcon"]
+
+# Rules are on unless switched off here.
+[rules]
+phone = false
+"#,
+        )
+        .unwrap();
+        let expected = Config {
+            allow: [
+                "intranet.acme.com",
+                "*.github.com",
+                "10.20.0.0/16",
+                "192.0.2.7",
+            ]
+            .map(String::from)
+            .to_vec(),
+            terms: ["Acme Corp", "Project Falcon"].map(String::from).to_vec(),
+            rules: RuleToggles {
+                phone: false,
+                ..RuleToggles::default()
+            },
+        };
+        assert_eq!(c, expected);
+    }
+
+    #[test]
+    fn all_nine_toggles_are_accepted() {
+        let src: String = std::iter::once("[rules]\n".to_string())
+            .chain(Kind::ALL.iter().map(|k| format!("{} = false\n", k.id())))
+            .collect();
+        let c = load_str(&src).unwrap();
+        for k in Kind::ALL {
+            assert!(!c.rules.enabled(k), "{k:?}");
+        }
+    }
+
+    #[test]
+    fn structural_errors_name_the_key_and_hide_values() {
+        let cases = [
+            ("allows = [\"hush1\"]", "allows"),
+            ("[rules]\nbogus = true", "bogus"),
+            ("terms = \"hush2\"", "terms"),
+            ("terms = [\"ok one\", 5]", "terms[1]"),
+            ("[rules]\nphone = \"hush3\"", "rules.phone"),
+            ("rules = \"hush4\"", "rules"),
+        ];
+        for (src, key) in cases {
+            let msg = load_str(src).unwrap_err().to_string();
+            assert!(msg.contains(key), "{msg}");
+            assert!(msg.contains("config.toml"), "{msg}");
+            assert!(msg.contains("line "), "{msg}");
+            assert!(!msg.contains("hush"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn syntax_error_has_position_and_no_term() {
+        let msg = load_str("\nterms = [\"Hushed Corp\" \"x\"]")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("line 2, column 24"), "{msg}");
+        assert!(!msg.contains("Hushed"), "{msg}");
+        let msg = load_str("terms = [\"Hushed\\q\"]").unwrap_err().to_string();
+        assert!(!msg.contains("Hushed"), "{msg}");
+    }
+
+    #[test]
+    fn resolve_path_order() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let flag = dir.path().join("flag.toml");
+        let envf = dir.path().join("env.toml");
+        let xdg = dir.path().join("xdg");
+        fs::create_dir_all(xdg.join("sagiri")).unwrap();
+        let xdg_file = xdg.join("sagiri/config.toml");
+        for f in [&flag, &envf, &xdg_file] {
+            fs::write(f, "").unwrap();
+        }
+        let env = env_of(&[
+            ("SAGIRI_CONFIG", envf.to_str().unwrap()),
+            ("XDG_CONFIG_HOME", xdg.to_str().unwrap()),
+            ("HOME", "/nonexistent"),
+        ]);
+        assert_eq!(resolve_path(Some(&flag), &env).unwrap(), Some(flag.clone()));
+        assert_eq!(resolve_path(None, &env).unwrap(), Some(envf.clone()));
+        let env = env_of(&[
+            ("SAGIRI_CONFIG", ""),
+            ("XDG_CONFIG_HOME", xdg.to_str().unwrap()),
+        ]);
+        assert_eq!(resolve_path(None, &env).unwrap(), Some(xdg_file));
+    }
+
+    #[test]
+    fn explicit_missing_path_is_an_error_naming_it() {
+        let env = env_of(&[("SAGIRI_CONFIG", "/nonexistent/sagiri.toml")]);
+        let e = resolve_path(None, &env).unwrap_err();
+        assert!(e.to_string().contains("/nonexistent/sagiri.toml"));
+        let env = env_of(&[]);
+        let e = resolve_path(Some(Path::new("/nonexistent/f.toml")), &env).unwrap_err();
+        assert!(e.to_string().contains("/nonexistent/f.toml"));
+    }
+
+    #[test]
+    fn xdg_unset_empty_or_relative_falls_back_to_home() {
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = home.path().join(".config/sagiri");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        fs::write(&file, "").unwrap();
+        let h = home.path().to_str().unwrap();
+        for pairs in [
+            vec![("HOME", h)],
+            vec![("HOME", h), ("XDG_CONFIG_HOME", "")],
+            vec![("HOME", h), ("XDG_CONFIG_HOME", "relative/dir")],
+        ] {
+            let env = env_of(&pairs);
+            assert_eq!(resolve_path(None, &env).unwrap(), Some(file.clone()));
+        }
+    }
+
+    #[test]
+    fn allowlist_table() {
+        let list = |e: &[&str]| {
+            Allowlist::new(&e.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap()
+        };
+        let exact = list(&["Intranet.Acme.com", "10.0.0.1", "2001:db8::1"]);
+        assert!(exact.matches("intranet.acme.com"));
+        assert!(exact.matches("INTRANET.ACME.COM"));
+        assert!(!exact.matches("acme.com"));
+        assert!(exact.matches("010.0.0.1"));
+        assert!(exact.matches("2001:DB8:0:0:0:0:0:1"));
+        assert!(!exact.matches("10.0.0.2"));
+
+        let wild = list(&["*.github.com"]);
+        assert!(wild.matches("api.github.com"));
+        assert!(wild.matches("a.b.github.com"));
+        assert!(wild.matches("API.GitHub.com."));
+        assert!(!wild.matches("github.com"));
+        assert!(!wild.matches("notgithub.com"));
+
+        let net = list(&["10.20.0.0/16", "2001:db8::/32", "0.0.0.0/0"]);
+        assert!(net.matches("10.20.3.4"));
+        assert!(net.matches("10.21.0.1")); // inside 0.0.0.0/0
+        assert!(net.matches("2001:db8:1::5"));
+        assert!(!net.matches("2001:db9::1"));
+        let net = list(&["10.20.0.0/16", "2001:db8::/32"]);
+        assert!(!net.matches("10.21.0.1"));
+        assert!(!net.matches("example.com"));
+        assert!(!Allowlist::empty().matches("10.0.0.1"));
+    }
+
+    #[test]
+    fn invalid_allow_entries_are_rejected_with_index() {
+        for bad in [
+            "",
+            "  ",
+            "*.",
+            "*..x",
+            "10.0.0.0/33",
+            "10.0.0.0/",
+            "x/16",
+            "*.a b",
+        ] {
+            let e = Allowlist::new(&["ok.example.com".to_string(), bad.to_string()])
+                .map(|_| ())
+                .unwrap_err();
+            assert!(e.to_string().contains("allow[1]"), "{bad:?}: {e}");
+        }
+        let e = load_str("allow = [\"*.\"]").unwrap_err().to_string();
+        assert!(e.contains("allow[0]") && e.contains("config.toml"), "{e}");
+    }
+
+    #[test]
+    fn invalid_terms_are_rejected_with_index() {
+        let e = load_str("terms = [\"fine\", \"x\"]")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("terms[1]") && e.contains("config.toml"), "{e}");
+        let e = load_str("terms = [\"a\\nb\"]").unwrap_err().to_string();
+        assert!(e.contains("terms[0]"), "{e}");
+    }
+}
