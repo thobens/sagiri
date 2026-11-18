@@ -12,6 +12,8 @@ use super::ui::line_width;
 
 /// Lines moved by a page scroll when the viewport size is not known yet.
 const DEFAULT_PAGE: usize = 10;
+/// Columns of a text pane when the size is not known yet.
+const DEFAULT_WIDTH: usize = 40;
 /// Columns moved by one press of a horizontal scroll key.
 const H_STEP: usize = 4;
 
@@ -143,9 +145,12 @@ pub struct App {
     /// Decisions kept in memory until exit. Never written anywhere.
     off_entries: HashSet<(Kind, String)>,
     off_kinds: HashSet<Kind>,
+    /// Entries switched on again inside a switched-off kind.
+    on_entries: HashSet<(Kind, String)>,
     v_offset: usize,
     h_offset: usize,
     page: usize,
+    pane_width: usize,
     message: Option<String>,
     quit: bool,
 }
@@ -164,12 +169,19 @@ impl App {
             focus: Focus::Text,
             off_entries: HashSet::new(),
             off_kinds: HashSet::new(),
+            on_entries: HashSet::new(),
+            pane_width: DEFAULT_WIDTH,
             v_offset: 0,
             h_offset: 0,
             page: DEFAULT_PAGE,
             message: None,
             quit: false,
         }
+    }
+
+    /// Tells the app how many columns a text pane shows, for scrolling to a finding.
+    pub fn set_pane_width(&mut self, columns: usize) {
+        self.pane_width = columns.max(1);
     }
 
     /// Tells the app how many lines fit on screen, for page scrolling.
@@ -200,6 +212,7 @@ impl App {
             Action::EnableAll => {
                 self.off_entries.clear();
                 self.off_kinds.clear();
+                self.on_entries.clear();
                 self.refresh();
             }
             Action::ScrollUp if self.focus == Focus::Findings => self.select(-1),
@@ -257,9 +270,13 @@ impl App {
     /// Applies the remembered decisions to the entries and re-renders the output. Does not
     /// analyze again.
     fn refresh(&mut self) {
-        for e in &mut self.entries {
-            e.on = !self.off_kinds.contains(&e.kind)
-                && !self.off_entries.contains(&(e.kind, e.original.clone()));
+        let on: Vec<bool> = self
+            .entries
+            .iter()
+            .map(|e| self.is_on(e.kind, &e.original))
+            .collect();
+        for (e, on) in self.entries.iter_mut().zip(on) {
+            e.on = on;
         }
         let on = |f: &Finding| {
             self.findings
@@ -310,22 +327,58 @@ impl App {
         if line < self.v_offset || line >= self.v_offset + self.page {
             self.v_offset = line.saturating_sub(self.page / 2).min(self.max_v());
         }
+        // Horizontal: the occurrence in both panes (the replacement can sit at another
+        // column than the original) must lie inside the visible columns.
+        let col_in = |lines: &Lines, pos: usize| {
+            let start = lines.ranges.get(line).map_or(0, |r| r.start);
+            let end = pos.min(lines.text.len());
+            lines.text.get(start..end).map_or(0, super::ui::line_width)
+        };
+        let o_start = col_in(&self.original, pos);
+        let o_end = o_start + line_width(&e.original);
+        let out_pos = self.output.marks.get(e.first).map(|m| m.range.start);
+        let out_start = out_pos.map_or(o_start, |p| col_in(&self.output, p));
+        let out_end = out_start + line_width(&self.output_mark_text(e.first));
+        let (lo, hi) = (o_start.min(out_start), o_end.max(out_end));
+        let width = self.pane_width;
+        if lo < self.h_offset || hi > self.h_offset + width {
+            self.h_offset = lo.saturating_sub(width / 4).min(self.max_h());
+        }
+    }
+
+    fn output_mark_text(&self, finding: usize) -> String {
+        self.output
+            .marks
+            .get(finding)
+            .and_then(|m| self.output.text.get(m.range.clone()))
+            .unwrap_or("")
+            .to_string()
+    }
+
+    /// Whether the entry is replaced, given the remembered decisions.
+    fn is_on(&self, kind: Kind, original: &str) -> bool {
+        let key = (kind, original.to_string());
+        !self.off_entries.contains(&key)
+            && (!self.off_kinds.contains(&kind) || self.on_entries.contains(&key))
     }
 
     fn toggle_entry(&mut self) {
         let Some(e) = self.entries.get(self.selected) else {
             return;
         };
-        let (kind, key) = (e.kind, (e.kind, e.original.clone()));
-        if self.off_kinds.remove(&kind) {
-            // The kind was off as a whole: keep the other entries of it off, turn this one on.
-            for other in self.entries.iter().filter(|o| o.kind == kind) {
-                self.off_entries
-                    .insert((other.kind, other.original.clone()));
+        let kind = e.kind;
+        let key = (kind, e.original.clone());
+        let kind_off = self.off_kinds.contains(&kind);
+        if e.on {
+            if !self.on_entries.remove(&key) {
+                self.off_entries.insert(key);
             }
+        } else {
             self.off_entries.remove(&key);
-        } else if !self.off_entries.remove(&key) {
-            self.off_entries.insert(key);
+            if kind_off {
+                // An exception to the switched-off kind; the kind stays off for new values.
+                self.on_entries.insert(key);
+            }
         }
         self.refresh();
     }
@@ -341,10 +394,17 @@ impl App {
             .all(|e| !e.on);
         if all_off {
             self.off_kinds.remove(&kind);
-            self.off_entries.retain(|(k, _)| *k != kind);
         } else {
             self.off_kinds.insert(kind);
         }
+        // The kind decision now covers the values on screen. Decisions about values that
+        // are not on screen stay remembered.
+        for e in self.entries.iter().filter(|e| e.kind == kind) {
+            let key = (kind, e.original.clone());
+            self.off_entries.remove(&key);
+            self.on_entries.remove(&key);
+        }
+        self.on_entries.retain(|(k, _)| *k != kind);
         self.refresh();
     }
 
@@ -891,6 +951,11 @@ pub(super) mod tests {
         for _ in 0..498 {
             text.push_str("filler\n");
         }
+        text.push_str(&format!("{B}\n"));
+        for _ in 0..400 {
+            text.push_str("filler\n");
+        }
+        // A second occurrence far below the first one.
         text.push_str(&format!("{B}\nend"));
         paste(&mut app, &text);
         app.set_page_size(10);
@@ -903,6 +968,58 @@ pub(super) mod tests {
         assert_eq!(app.original_line(line), B);
         app.update(Action::ScrollUp);
         assert_eq!(app.v_offset(), 0);
+    }
+
+    #[test]
+    fn selection_scrolls_horizontally_to_the_occurrence() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A}\n{}{B}\n", "x ".repeat(150)));
+        app.set_pane_width(40);
+        focus_findings(&mut app);
+        app.update(Action::ScrollDown);
+        let (h, start) = (app.h_offset(), 300);
+        assert!(h <= start && start + B.len() <= h + 40, "{h}");
+        app.update(Action::ScrollUp);
+        assert_eq!(app.h_offset(), 0);
+        // Scrolled right already: selecting a value at the start scrolls back.
+        app.update(Action::FocusNext);
+        app.update(Action::ScrollRight);
+        app.update(Action::FocusNext);
+        app.update(Action::ScrollDown);
+        app.update(Action::ScrollUp);
+        assert_eq!(app.h_offset(), 0);
+    }
+
+    #[test]
+    fn kind_decision_survives_entry_toggle_in_it() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B}"));
+        focus_findings(&mut app);
+        app.update(Action::ToggleKind);
+        app.update(Action::ToggleEntry);
+        // A is an exception; a new value of the kind is still kept.
+        paste(&mut app, &format!("{A} {B} 203.0.113.9"));
+        assert_eq!(app.status_counts(), (1, 2));
+        assert!(!app.output().contains(A));
+        assert!(app.output().contains("203.0.113.9"));
+        // And the exception can be undone.
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.status_counts(), (0, 3));
+    }
+
+    #[test]
+    fn switching_a_kind_on_keeps_decisions_for_values_not_on_screen() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B}"));
+        focus_findings(&mut app);
+        app.update(Action::ToggleEntry);
+        paste(&mut app, B);
+        app.update(Action::ToggleKind);
+        app.update(Action::ToggleKind);
+        paste(&mut app, &format!("{A} {B}"));
+        assert_eq!(app.status_counts(), (1, 1));
+        assert!(app.output().contains(A));
+        assert!(!app.output().contains(B));
     }
 
     #[test]

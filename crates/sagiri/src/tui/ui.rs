@@ -13,7 +13,13 @@ use super::app::{App, Entry, Focus, Mark};
 /// Terminals at least this wide get the panes side by side.
 const SIDE_BY_SIDE_MIN_WIDTH: u16 = 100;
 const EMPTY_HINT: &str = "Paste text here (terminal paste or Ctrl+V)";
-const KEY_HINTS: &str = "y copy  p paste  x clear  Tab focus  Space toggle  t kind  a all  q quit";
+/// Key hints for the status line, longest first. The first one that fits is shown.
+const KEY_HINTS: [&str; 4] = [
+    "y copy  p paste  x clear  Tab focus  Space toggle  t kind  a all  q quit",
+    "y copy  Tab focus  Space toggle  t kind  a all  q quit",
+    "Tab focus  Space toggle  y copy  q quit",
+    "y copy  q quit",
+];
 const TAB_WIDTH: usize = 4;
 
 /// Control characters and invisible format characters (bidi overrides, zero-width marks)
@@ -243,6 +249,12 @@ pub fn page_size(area: Rect, entries: usize) -> usize {
     usize::from(a.left.height.min(a.right.height).saturating_sub(2))
 }
 
+/// Columns of a text pane, for scrolling to a finding.
+pub fn pane_width(area: Rect, entries: usize) -> usize {
+    let a = areas(area, entries);
+    usize::from(a.left.width.min(a.right.width).saturating_sub(2))
+}
+
 pub fn draw(app: &App, frame: &mut Frame) {
     let a = areas(frame.area(), app.entries().len());
     let text_focus = app.focus() == Focus::Text;
@@ -361,16 +373,20 @@ fn draw_status(app: &App, frame: &mut Frame, area: Rect) {
             )
         }
     };
-    // The key hints are ASCII, so chars equal columns. They are left out when the status
-    // line is too narrow to hold them next to the message.
-    let hints_width = KEY_HINTS.chars().count() as u16;
-    if area.width > hints_width + 36 {
-        let [left, right] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Length(hints_width)]).areas(area);
-        frame.render_widget(Paragraph::new(left_text), left);
-        frame.render_widget(Paragraph::new(KEY_HINTS), right);
-    } else {
-        frame.render_widget(Paragraph::new(left_text), area);
+    // The longest hint set that fits next to the message (the hints are ASCII, so chars
+    // equal columns).
+    let room = usize::from(area.width).saturating_sub(line_width(&left_text) + 2);
+    match KEY_HINTS.iter().find(|h| h.chars().count() <= room) {
+        Some(hints) => {
+            let [left, right] = Layout::horizontal([
+                Constraint::Fill(1),
+                Constraint::Length(hints.chars().count() as u16),
+            ])
+            .areas(area);
+            frame.render_widget(Paragraph::new(left_text), left);
+            frame.render_widget(Paragraph::new(*hints), right);
+        }
+        None => frame.render_widget(Paragraph::new(left_text), area),
     }
 }
 
@@ -694,6 +710,18 @@ mod tests {
         let panel_focus = render(&app, 120, 30);
         assert_eq!(panel_focus[(0, 0)].symbol(), "┌");
         assert_eq!(panel_focus[(0, ty)].symbol(), "┏");
+    }
+
+    #[test]
+    fn findings_keys_are_hinted_at_common_widths() {
+        let app = pasted("a 172.55.0.1 b");
+        for w in [80, 100, 120] {
+            let buf = render(&app, w, 30);
+            let status = row(&buf, 29);
+            assert!(status.contains("Tab focus"), "{w}: {status}");
+            assert!(status.contains("Space toggle"), "{w}: {status}");
+            assert!(status.contains("1 replaced · 0 kept"), "{w}: {status}");
+        }
     }
 
     #[test]

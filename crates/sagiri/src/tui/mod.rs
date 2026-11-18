@@ -68,11 +68,9 @@ pub fn run(engine: Engine) -> anyhow::Result<()> {
 
     while !app.should_quit() {
         let size = terminal.size().context("cannot read the terminal size")?;
-        let page = ui::page_size(
-            Rect::new(0, 0, size.width, size.height),
-            app.entries().len(),
-        );
-        app.set_page_size(page);
+        let area = Rect::new(0, 0, size.width, size.height);
+        app.set_page_size(ui::page_size(area, app.entries().len()));
+        app.set_pane_width(ui::pane_width(area, app.entries().len()));
         terminal
             .draw(|frame| ui::draw(&app, frame))
             .context("cannot draw the screen")?;
