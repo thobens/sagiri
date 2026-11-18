@@ -1,7 +1,7 @@
 ---
 id: "0013"
 title: CI workflow
-status: todo
+status: done
 depends_on: ["0001"]
 ---
 

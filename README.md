@@ -90,7 +90,7 @@ not commit it to a repository.
 scripts/check.sh
 ```
 
-This runs rustfmt, clippy with warnings as errors, and all tests.
+This runs rustfmt, clippy with warnings as errors, and all tests. CI runs `scripts/check.sh` on Linux and macOS.
 
 ## More
 
