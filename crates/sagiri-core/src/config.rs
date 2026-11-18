@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-use crate::paths::{self, PathError};
+use crate::paths;
 use crate::rule::Kind;
 use crate::rules::ip::parse_v4_lenient;
 
@@ -43,9 +43,6 @@ pub enum ConfigError {
         key: String,
         reason: &'static str,
     },
-    /// The default config location cannot be determined.
-    #[error("cannot locate the config file: {0}")]
-    Path(#[from] PathError),
 }
 
 struct PathPrefix<'a>(&'a Option<PathBuf>);
@@ -182,7 +179,11 @@ pub fn resolve_path(
             Err(ConfigError::NotFound(p))
         };
     }
-    let p = paths::config_dir_with(env)?.join("config.toml");
+    // Without HOME and a usable XDG_CONFIG_HOME there is no default location: no file.
+    let Ok(dir) = paths::config_dir_with(env) else {
+        return Ok(None);
+    };
+    let p = dir.join("config.toml");
     Ok(p.exists().then_some(p))
 }
 
@@ -204,15 +205,15 @@ fn parse(src: &str, path: &Path) -> Result<Config, ConfigError> {
             detail,
         }
     };
-    let table: toml::Table =
-        toml::from_str(src).map_err(|e| err(e.span().map(|s| s.start), e.message().to_string()))?;
+    let table = toml::de::DeTable::parse(src)
+        .map_err(|e| err(e.span().map(|s| s.start), e.message().to_string()))?;
     toml::from_str::<Config>(src).map_err(|e| {
         let start = e.span().map(|s| s.start);
         // The message of an unknown field names only the key. Other messages quote the
         // offending value, so they are replaced by one that names the key.
         let detail = if e.message().starts_with("unknown field") {
             e.message().to_string()
-        } else if let Some((key, expected)) = locate_type_error(&table) {
+        } else if let Some((key, expected)) = start.and_then(|o| locate(table.get_ref(), o)) {
             format!("`{key}`: {expected}")
         } else {
             "invalid value".to_string()
@@ -221,29 +222,36 @@ fn parse(src: &str, path: &Path) -> Result<Config, ConfigError> {
     })
 }
 
-/// The key (or array element) with a wrong type, and what was expected there.
-fn locate_type_error(table: &toml::Table) -> Option<(String, &'static str)> {
-    for key in ["allow", "terms"] {
-        match table.get(key) {
-            None => {}
-            Some(toml::Value::Array(items)) => {
-                if let Some(i) = items.iter().position(|v| !v.is_str()) {
-                    return Some((format!("{key}[{i}]"), "expected a string"));
-                }
-            }
-            Some(_) => return Some((key.to_string(), "expected an array of strings")),
+/// The key or array element whose value contains `offset`, and what is expected there.
+fn locate(table: &toml::de::DeTable<'_>, offset: usize) -> Option<(String, &'static str)> {
+    use toml::de::DeValue;
+    for (k, v) in table {
+        let key: &str = k.get_ref().as_ref();
+        // The span of a `[table]` covers its header only, so look inside it.
+        if !v.span().contains(&offset) && key != "rules" {
+            continue;
         }
-    }
-    match table.get("rules") {
-        None => {}
-        Some(toml::Value::Table(rules)) => {
-            for kind in Kind::ALL {
-                if rules.get(kind.id()).is_some_and(|v| !v.is_bool()) {
-                    return Some((format!("rules.{}", kind.id()), "expected a boolean"));
-                }
+        let found = match (key, v.get_ref()) {
+            ("allow" | "terms", DeValue::Array(items)) => {
+                let i = items.iter().position(|x| x.span().contains(&offset))?;
+                Some((format!("{key}[{i}]"), "expected a string"))
             }
+            ("allow" | "terms", _) => Some((key.to_string(), "expected an array of strings")),
+            ("rules", DeValue::Table(rules)) => rules
+                .iter()
+                .find(|(_, x)| x.span().contains(&offset))
+                .map(|(rk, _)| {
+                    let rk: &str = rk.get_ref().as_ref();
+                    (format!("rules.{rk}"), "expected a boolean")
+                }),
+            ("rules", _) if v.span().contains(&offset) => {
+                Some(("rules".to_string(), "expected a table"))
+            }
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
         }
-        Some(_) => return Some(("rules".to_string(), "expected a table")),
     }
     None
 }
@@ -394,6 +402,30 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let env = env_of(&[("XDG_CONFIG_HOME", dir.path().to_str().unwrap())]);
         assert_eq!(resolve_path(None, &env).unwrap(), None);
+    }
+
+    #[test]
+    fn no_home_and_no_xdg_means_defaults() {
+        assert_eq!(resolve_path(None, &env_of(&[])).unwrap(), None);
+    }
+
+    #[test]
+    fn error_points_at_the_bad_key() {
+        let msg = load_str("terms = [\"ok\"]\n[rules]\nterm = \"Secretco\"\nphone = 5")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("line 4") && msg.contains("rules.phone"),
+            "{msg}"
+        );
+        let msg = load_str("terms = [\"ok\"]\n[rules]\nphone = 5")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("line 3") && msg.contains("rules.phone"),
+            "{msg}"
+        );
+        assert!(!msg.contains("Secretco"));
     }
 
     #[test]

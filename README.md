@@ -55,7 +55,8 @@ first of:
 3. `$XDG_CONFIG_HOME/sagiri/config.toml` (default `~/.config/sagiri/config.toml`)
 
 A path given by flag or environment variable must exist. A missing file at the XDG path
-means that all defaults apply.
+means that all defaults apply. The same holds if the default location cannot be
+determined because neither `XDG_CONFIG_HOME` nor `HOME` is usable.
 
 ```toml
 # Values that are never replaced.

@@ -129,3 +129,39 @@ fn unknown_key_exits_1_with_empty_stdout() {
     );
     assert!(!stderr.contains("hushed"), "{stderr}");
 }
+
+#[test]
+fn rule_toggles_apply() {
+    let dir = TempDir::new().unwrap();
+    let cfg = dir.path().join("c.toml");
+    fs::write(&cfg, "[rules]\nipv4 = false\n").unwrap();
+    let o = out(
+        sagiri(dir.path()).arg("--config").arg(&cfg),
+        "ip 198.51.100.7 host git.acme.com\n",
+    );
+    assert!(o.contains("198.51.100.7"), "{o}");
+    assert!(!o.contains("git.acme.com"), "{o}");
+
+    fs::write(
+        &cfg,
+        "terms = [\"Project Falcon\"]\n[rules]\nterm = false\n",
+    )
+    .unwrap();
+    let o = out(
+        sagiri(dir.path()).arg("--config").arg(&cfg),
+        "about Project Falcon\n",
+    );
+    assert_eq!(o, "about Project Falcon\n");
+}
+
+#[test]
+fn works_without_home_when_no_config_is_given() {
+    let dir = TempDir::new().unwrap();
+    let o = out(
+        sagiri(dir.path())
+            .env_remove("HOME")
+            .env_remove("XDG_CONFIG_HOME"),
+        "ip 198.51.100.7\n",
+    );
+    assert_ne!(o, "ip 198.51.100.7\n");
+}
