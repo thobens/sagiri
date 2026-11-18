@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Context as _;
 use crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::execute;
+use ratatui::layout::Rect;
 use sagiri_core::engine::Engine;
 
 use app::{App, action_for};
@@ -67,10 +68,11 @@ pub fn run(engine: Engine) -> anyhow::Result<()> {
 
     while !app.should_quit() {
         let size = terminal.size().context("cannot read the terminal size")?;
-        let panes = size.height.saturating_sub(1);
-        let stacked = size.width < 100;
-        let pane_height = if stacked { panes / 2 } else { panes };
-        app.set_page_size(usize::from(pane_height.saturating_sub(2)));
+        let page = ui::page_size(
+            Rect::new(0, 0, size.width, size.height),
+            app.entries().len(),
+        );
+        app.set_page_size(page);
         terminal
             .draw(|frame| ui::draw(&app, frame))
             .context("cannot draw the screen")?;

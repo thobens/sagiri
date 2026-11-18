@@ -1,9 +1,11 @@
 //! Application state. No terminal or clipboard code lives here.
 
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use sagiri_core::engine::{Engine, render};
+use sagiri_core::engine::{Engine, Finding, render};
+use sagiri_core::rule::Kind;
 
 use super::clipboard::Clipboard;
 use super::ui::line_width;
@@ -22,6 +24,14 @@ pub enum Action {
     /// Copy the obfuscated text to the system clipboard.
     Copy,
     Clear,
+    /// Switch focus between the text panes and the findings panel.
+    FocusNext,
+    /// Switch the selected findings entry on or off.
+    ToggleEntry,
+    /// Switch every entry of the selected entry's kind on or off.
+    ToggleKind,
+    /// Switch everything back on.
+    EnableAll,
     ScrollUp,
     ScrollDown,
     PageUp,
@@ -33,16 +43,47 @@ pub enum Action {
     Quit,
 }
 
+/// Which area gets the arrow keys.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Focus {
+    Text,
+    Findings,
+}
+
+/// A highlighted byte range: a finding in the original or its text in the output.
+#[derive(Clone, Debug)]
+pub struct Mark {
+    pub range: Range<usize>,
+    pub kind: Kind,
+    /// False if the finding is switched off.
+    pub on: bool,
+}
+
+/// One row of the findings panel: a distinct (kind, original text).
+#[derive(Clone)]
+pub struct Entry {
+    pub kind: Kind,
+    pub original: String,
+    pub replacement: String,
+    pub count: usize,
+    /// Index of the first occurrence in the findings.
+    first: usize,
+    /// False if the entry is switched off.
+    pub on: bool,
+}
+
 /// One text split into lines, for cheap access to the visible ones.
 #[derive(Default)]
 struct Lines {
     text: String,
     ranges: Vec<Range<usize>>,
     max_width: usize,
+    /// Sorted by start, without overlaps.
+    marks: Vec<Mark>,
 }
 
 impl Lines {
-    fn new(text: String) -> Self {
+    fn new(text: String, marks: Vec<Mark>) -> Self {
         let mut ranges = Vec::new();
         let mut start = 0;
         for (i, b) in text.bytes().enumerate() {
@@ -63,7 +104,24 @@ impl Lines {
             text,
             ranges,
             max_width,
+            marks,
         }
+    }
+
+    /// Marks that fall on a line, with ranges relative to the start of the line.
+    fn line_marks(&self, index: usize) -> Vec<Mark> {
+        let Some(r) = self.ranges.get(index) else {
+            return Vec::new();
+        };
+        let first = self.marks.partition_point(|m| m.range.end <= r.start);
+        self.marks[first..]
+            .iter()
+            .take_while(|m| m.range.start < r.end)
+            .map(|m| Mark {
+                range: m.range.start - r.start..m.range.end - r.start,
+                ..m.clone()
+            })
+            .collect()
     }
 
     fn get(&self, index: usize) -> &str {
@@ -76,7 +134,15 @@ pub struct App {
     clipboard: Box<dyn Clipboard>,
     original: Lines,
     output: Lines,
-    findings: usize,
+    findings: Vec<Finding>,
+    entries: Vec<Entry>,
+    /// Entry index of every finding.
+    finding_entry: Vec<usize>,
+    selected: usize,
+    focus: Focus,
+    /// Decisions kept in memory until exit. Never written anywhere.
+    off_entries: HashSet<(Kind, String)>,
+    off_kinds: HashSet<Kind>,
     v_offset: usize,
     h_offset: usize,
     page: usize,
@@ -91,7 +157,13 @@ impl App {
             clipboard,
             original: Lines::default(),
             output: Lines::default(),
-            findings: 0,
+            findings: Vec::new(),
+            entries: Vec::new(),
+            finding_entry: Vec::new(),
+            selected: 0,
+            focus: Focus::Text,
+            off_entries: HashSet::new(),
+            off_kinds: HashSet::new(),
             v_offset: 0,
             h_offset: 0,
             page: DEFAULT_PAGE,
@@ -115,6 +187,23 @@ impl App {
             },
             Action::Copy => self.copy(),
             Action::Clear => self.set_text(""),
+            Action::FocusNext => {
+                self.focus = match self.focus {
+                    Focus::Findings => Focus::Text,
+                    Focus::Text if !self.entries.is_empty() => Focus::Findings,
+                    Focus::Text => Focus::Text,
+                }
+            }
+            Action::ToggleEntry if self.focus == Focus::Findings => self.toggle_entry(),
+            Action::ToggleKind if self.focus == Focus::Findings => self.toggle_kind(),
+            Action::ToggleEntry | Action::ToggleKind => {}
+            Action::EnableAll => {
+                self.off_entries.clear();
+                self.off_kinds.clear();
+                self.refresh();
+            }
+            Action::ScrollUp if self.focus == Focus::Findings => self.select(-1),
+            Action::ScrollDown if self.focus == Focus::Findings => self.select(1),
             Action::ScrollUp => self.scroll_v(-1),
             Action::ScrollDown => self.scroll_v(1),
             Action::PageUp => self.scroll_v(-(self.page as isize)),
@@ -129,13 +218,134 @@ impl App {
 
     fn set_text(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        let findings = self.engine.analyze(&text);
-        let rendered = render(&text, &findings, |_| true);
-        self.findings = findings.len();
-        self.original = Lines::new(text);
-        self.output = Lines::new(rendered.text);
+        self.findings = self.engine.analyze(&text);
+        self.build_entries();
+        self.original = Lines::new(text, Vec::new());
+        self.selected = 0;
+        if self.entries.is_empty() {
+            self.focus = Focus::Text;
+        }
+        self.refresh();
         self.v_offset = 0;
         self.h_offset = 0;
+    }
+
+    /// Groups the findings into entries, in order of first appearance.
+    fn build_entries(&mut self) {
+        let mut index: HashMap<(Kind, &str), usize> = HashMap::new();
+        let mut entries: Vec<Entry> = Vec::new();
+        let mut finding_entry = Vec::with_capacity(self.findings.len());
+        for (i, f) in self.findings.iter().enumerate() {
+            let e = *index.entry((f.kind, &f.original)).or_insert_with(|| {
+                entries.push(Entry {
+                    kind: f.kind,
+                    original: f.original.clone(),
+                    replacement: f.replacement.clone(),
+                    count: 0,
+                    first: i,
+                    on: true,
+                });
+                entries.len() - 1
+            });
+            entries[e].count += 1;
+            finding_entry.push(e);
+        }
+        self.entries = entries;
+        self.finding_entry = finding_entry;
+    }
+
+    /// Applies the remembered decisions to the entries and re-renders the output. Does not
+    /// analyze again.
+    fn refresh(&mut self) {
+        for e in &mut self.entries {
+            e.on = !self.off_kinds.contains(&e.kind)
+                && !self.off_entries.contains(&(e.kind, e.original.clone()));
+        }
+        let on = |f: &Finding| {
+            self.findings
+                .binary_search_by_key(&f.span.start, |x| x.span.start)
+                .map_or(true, |i| self.entries[self.finding_entry[i]].on)
+        };
+        let rendered = render(&self.original.text, &self.findings, on);
+        let original_marks = self
+            .findings
+            .iter()
+            .zip(&self.finding_entry)
+            .map(|(f, &e)| Mark {
+                range: f.span.clone(),
+                kind: f.kind,
+                on: self.entries[e].on,
+            })
+            .collect();
+        let output_marks = rendered
+            .spans
+            .iter()
+            .map(|s| Mark {
+                range: s.range.clone(),
+                kind: self.findings[s.finding].kind,
+                on: s.replaced,
+            })
+            .collect();
+        self.original.marks = original_marks;
+        self.output = Lines::new(rendered.text, output_marks);
+    }
+
+    fn select(&mut self, delta: isize) {
+        let last = self.entries.len().saturating_sub(1);
+        self.selected = self.selected.saturating_add_signed(delta).min(last);
+        self.reveal_selected();
+    }
+
+    /// Scrolls so that the first occurrence of the selected entry is visible.
+    fn reveal_selected(&mut self) {
+        let Some(e) = self.entries.get(self.selected) else {
+            return;
+        };
+        let pos = self.findings[e.first].span.start;
+        let line = self
+            .original
+            .ranges
+            .partition_point(|r| r.start <= pos)
+            .saturating_sub(1);
+        if line < self.v_offset || line >= self.v_offset + self.page {
+            self.v_offset = line.saturating_sub(self.page / 2).min(self.max_v());
+        }
+    }
+
+    fn toggle_entry(&mut self) {
+        let Some(e) = self.entries.get(self.selected) else {
+            return;
+        };
+        let (kind, key) = (e.kind, (e.kind, e.original.clone()));
+        if self.off_kinds.remove(&kind) {
+            // The kind was off as a whole: keep the other entries of it off, turn this one on.
+            for other in self.entries.iter().filter(|o| o.kind == kind) {
+                self.off_entries
+                    .insert((other.kind, other.original.clone()));
+            }
+            self.off_entries.remove(&key);
+        } else if !self.off_entries.remove(&key) {
+            self.off_entries.insert(key);
+        }
+        self.refresh();
+    }
+
+    fn toggle_kind(&mut self) {
+        let Some(kind) = self.entries.get(self.selected).map(|e| e.kind) else {
+            return;
+        };
+        let all_off = self
+            .entries
+            .iter()
+            .filter(|e| e.kind == kind)
+            .all(|e| !e.on);
+        if all_off {
+            self.off_kinds.remove(&kind);
+            self.off_entries.retain(|(k, _)| *k != kind);
+        } else {
+            self.off_kinds.insert(kind);
+        }
+        self.refresh();
     }
 
     fn copy(&mut self) {
@@ -200,8 +410,35 @@ impl App {
         self.original.ranges.len()
     }
 
+    #[cfg(test)]
     pub fn finding_count(&self) -> usize {
-        self.findings
+        self.findings.len()
+    }
+
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    pub fn focus(&self) -> Focus {
+        self.focus
+    }
+
+    /// Entries that are replaced and entries that are kept.
+    pub fn status_counts(&self) -> (usize, usize) {
+        let replaced = self.entries.iter().filter(|e| e.on).count();
+        (replaced, self.entries.len() - replaced)
+    }
+
+    pub fn original_marks(&self, line: usize) -> Vec<Mark> {
+        self.original.line_marks(line)
+    }
+
+    pub fn output_marks(&self, line: usize) -> Vec<Mark> {
+        self.output.line_marks(line)
     }
 
     pub fn v_offset(&self) -> usize {
@@ -242,6 +479,10 @@ fn key_action(key: &KeyEvent) -> Option<Action> {
         KeyCode::Char('p') => Some(Action::PasteClipboard),
         KeyCode::Char('y') | KeyCode::Enter => Some(Action::Copy),
         KeyCode::Char('x') => Some(Action::Clear),
+        KeyCode::Tab | KeyCode::BackTab => Some(Action::FocusNext),
+        KeyCode::Char(' ') => Some(Action::ToggleEntry),
+        KeyCode::Char('t') => Some(Action::ToggleKind),
+        KeyCode::Char('a') => Some(Action::EnableAll),
         KeyCode::Up | KeyCode::Char('k') => Some(Action::ScrollUp),
         KeyCode::Down | KeyCode::Char('j') => Some(Action::ScrollDown),
         KeyCode::PageUp => Some(Action::PageUp),
@@ -443,6 +684,10 @@ pub(super) mod tests {
             (ch('y'), Some(Action::Copy)),
             (key(KeyCode::Enter), Some(Action::Copy)),
             (ch('x'), Some(Action::Clear)),
+            (key(KeyCode::Tab), Some(Action::FocusNext)),
+            (ch(' '), Some(Action::ToggleEntry)),
+            (ch('t'), Some(Action::ToggleKind)),
+            (ch('a'), Some(Action::EnableAll)),
             (ctrl('l'), Some(Action::Clear)),
             (key(KeyCode::Up), Some(Action::ScrollUp)),
             (ch('k'), Some(Action::ScrollUp)),
@@ -485,5 +730,219 @@ pub(super) mod tests {
         let (mut app, _) = app();
         app.update(Action::Quit);
         assert!(app.should_quit());
+    }
+
+    const A: &str = "172.55.0.1";
+    const B: &str = "198.51.100.7";
+
+    fn focus_findings(app: &mut App) {
+        app.update(Action::FocusNext);
+        assert_eq!(app.focus(), Focus::Findings);
+    }
+
+    #[test]
+    fn entries_group_by_kind_and_original() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B} {A}\n{A}"));
+        let e = app.entries();
+        assert_eq!(e.len(), 2);
+        assert_eq!((e[0].original.as_str(), e[0].count), (A, 3));
+        assert_eq!((e[1].original.as_str(), e[1].count), (B, 1));
+        assert_eq!(e[0].kind, Kind::Ipv4);
+    }
+
+    #[test]
+    fn toggle_entry_keeps_original_in_output() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} x {B} y {A}"));
+        let before = app.output().to_string();
+        focus_findings(&mut app);
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.output().matches(A).count(), 2);
+        assert!(!app.output().contains(B));
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.output(), before);
+    }
+
+    struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl sagiri_core::rule::Rule for Counting {
+        fn kind(&self) -> Kind {
+            Kind::Term
+        }
+        fn detect(&self, text: &str) -> Vec<Range<usize>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            text.match_indices("SECRET")
+                .map(|(i, m)| i..i + m.len())
+                .collect()
+        }
+        fn replace(&self, _: &str, _: &sagiri_core::rule::Context<'_>) -> String {
+            "XXXXXX".to_string()
+        }
+    }
+
+    #[test]
+    fn toggle_does_not_reanalyze() {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let engine = Engine::new(
+            Pseudonymizer::new(&Key::from_bytes([7; 32])),
+            vec![Box::new(Counting(calls.clone()))],
+        );
+        let mut app = App::new(engine, Box::new(FakeClipboard::default()));
+        paste(&mut app, "a SECRET b");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(app.output(), "a XXXXXX b");
+        focus_findings(&mut app);
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.output(), "a SECRET b");
+        app.update(Action::ToggleKind);
+        app.update(Action::EnableAll);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn toggle_kind_affects_all_entries_of_that_kind() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B} main.acme.com"));
+        assert_eq!(app.entries().len(), 3);
+        focus_findings(&mut app);
+        app.update(Action::ToggleKind);
+        assert!(app.output().contains(A) && app.output().contains(B));
+        assert!(!app.output().contains("main.acme.com"));
+        assert_eq!(app.status_counts(), (1, 2));
+        app.update(Action::ToggleKind);
+        assert_eq!(app.status_counts(), (3, 0));
+        assert!(!app.output().contains(A));
+    }
+
+    #[test]
+    fn enable_all_restores_everything() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B}"));
+        let before = app.output().to_string();
+        focus_findings(&mut app);
+        app.update(Action::ToggleKind);
+        assert_eq!(app.output(), app.original());
+        app.update(Action::EnableAll);
+        assert_eq!(app.output(), before);
+        assert_eq!(app.status_counts(), (2, 0));
+        // The memory is gone for new pastes too.
+        app.update(Action::ToggleEntry);
+        app.update(Action::FocusNext);
+        app.update(Action::EnableAll);
+        paste(&mut app, A);
+        assert_eq!(app.status_counts(), (1, 0));
+    }
+
+    #[test]
+    fn copy_respects_toggles() {
+        let (mut app, clip) = app();
+        paste(&mut app, &format!("{A} {B}"));
+        focus_findings(&mut app);
+        app.update(Action::ToggleEntry);
+        app.update(Action::Copy);
+        let copied = clip.content();
+        assert!(copied.starts_with(A));
+        assert!(!copied.contains(B));
+        assert_eq!(copied, app.output());
+    }
+
+    #[test]
+    fn decisions_survive_new_paste_and_clear() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B}"));
+        focus_findings(&mut app);
+        app.update(Action::ToggleEntry);
+        paste(&mut app, &format!("{B} {A}"));
+        assert_eq!(app.status_counts(), (1, 1));
+        assert!(app.output().contains(A));
+        app.update(Action::Clear);
+        paste(&mut app, &format!("zz {A}"));
+        assert_eq!(app.output(), format!("zz {A}"));
+        assert_eq!(app.status_counts(), (0, 1));
+    }
+
+    #[test]
+    fn kind_decision_applies_to_later_pastes() {
+        let (mut app, _) = app();
+        paste(&mut app, A);
+        focus_findings(&mut app);
+        app.update(Action::ToggleKind);
+        paste(&mut app, B);
+        assert_eq!(app.output(), B);
+    }
+
+    #[test]
+    fn entry_toggle_inside_a_switched_off_kind() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} {B}"));
+        focus_findings(&mut app);
+        app.update(Action::ToggleKind);
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.status_counts(), (1, 1));
+        assert!(!app.output().contains(A));
+        assert!(app.output().contains(B));
+    }
+
+    #[test]
+    fn selection_scrolls_to_first_occurrence() {
+        let (mut app, _) = app();
+        let mut text = format!("{A}\n");
+        for _ in 0..498 {
+            text.push_str("filler\n");
+        }
+        text.push_str(&format!("{B}\nend"));
+        paste(&mut app, &text);
+        app.set_page_size(10);
+        focus_findings(&mut app);
+        assert_eq!(app.v_offset(), 0);
+        app.update(Action::ScrollDown);
+        assert_eq!(app.selected(), 1);
+        let line = 499;
+        assert!(app.v_offset() <= line && line < app.v_offset() + 10);
+        assert_eq!(app.original_line(line), B);
+        app.update(Action::ScrollUp);
+        assert_eq!(app.v_offset(), 0);
+    }
+
+    #[test]
+    fn status_counts() {
+        let (mut app, _) = app();
+        assert_eq!(app.status_counts(), (0, 0));
+        paste(&mut app, &format!("{A} {B} {A}"));
+        assert_eq!(app.status_counts(), (2, 0));
+        focus_findings(&mut app);
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.status_counts(), (1, 1));
+    }
+
+    #[test]
+    fn focus_changes_arrow_key_meaning() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A}\nline\n{B}\nmore"));
+        app.update(Action::ScrollDown);
+        assert_eq!((app.v_offset(), app.selected()), (1, 0));
+        app.update(Action::Top);
+        focus_findings(&mut app);
+        app.update(Action::ScrollDown);
+        assert_eq!((app.v_offset(), app.selected()), (0, 1));
+        app.update(Action::ScrollDown);
+        assert_eq!(app.selected(), 1);
+        app.update(Action::ScrollUp);
+        assert_eq!(app.selected(), 0);
+        app.update(Action::FocusNext);
+        assert_eq!(app.focus(), Focus::Text);
+        app.update(Action::ScrollDown);
+        assert_eq!((app.v_offset(), app.selected()), (1, 0));
+    }
+
+    #[test]
+    fn toggles_need_the_findings_focus_and_focus_needs_entries() {
+        let (mut app, _) = app();
+        app.update(Action::FocusNext);
+        assert_eq!(app.focus(), Focus::Text);
+        paste(&mut app, A);
+        app.update(Action::ToggleEntry);
+        assert_eq!(app.status_counts(), (1, 0));
     }
 }
