@@ -1012,13 +1012,13 @@ pub(super) mod tests {
         let o_col = app.original_line(0).find(B).unwrap();
         let out_col = app.output_line(0).find(&repl).unwrap();
         assert_ne!(o_col, out_col);
-        app.set_pane_width(40);
+        app.set_pane_width(20);
         focus_findings(&mut app);
         app.update(Action::ScrollDown);
         let h = app.h_offset();
         assert!(h <= o_col.min(out_col), "{h}");
-        assert!(o_col + B.len() <= h + 40, "{h}");
-        assert!(out_col + repl.len() <= h + 40, "{h}");
+        assert!(o_col + B.len() <= h + 20, "{h}");
+        assert!(out_col + repl.len() <= h + 20, "{h}");
     }
 
     #[test]
