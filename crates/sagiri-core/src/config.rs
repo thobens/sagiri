@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use serde::Deserialize;
 
-use crate::paths;
+use crate::paths::{self, PathError};
 use crate::rule::Kind;
 use crate::rules::ip::parse_v4_lenient;
 
@@ -180,8 +180,9 @@ pub fn resolve_path(
         };
     }
     // Without HOME and a usable XDG_CONFIG_HOME there is no default location: no file.
-    let Ok(dir) = paths::config_dir_with(env) else {
-        return Ok(None);
+    let dir = match paths::config_dir_with(env) {
+        Ok(dir) => dir,
+        Err(PathError::NoHome) => return Ok(None),
     };
     let p = dir.join("config.toml");
     Ok(p.exists().then_some(p))
