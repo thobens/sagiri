@@ -342,7 +342,11 @@ impl App {
         let (lo, hi) = (o_start.min(out_start), o_end.max(out_end));
         let width = self.pane_width;
         if lo < self.h_offset || hi > self.h_offset + width {
-            self.h_offset = lo.saturating_sub(width / 4).min(self.max_h());
+            // Some context to the left if there is room. When the original and the
+            // replacement together are wider than the pane, both cannot be shown: the
+            // leftmost one starts at the left edge (best effort).
+            let margin = width.saturating_sub(hi - lo).min(width / 4);
+            self.h_offset = lo.saturating_sub(margin).min(self.max_h());
         }
     }
 
@@ -397,8 +401,10 @@ impl App {
         } else {
             self.off_kinds.insert(kind);
         }
-        // The kind decision now covers the values on screen. Decisions about values that
-        // are not on screen stay remembered.
+        // The kind decision now covers the values on screen: their own decisions and
+        // exceptions are dropped. Individual "keep" decisions for values that are not on
+        // screen stay remembered. Exceptions ("replace this one") of the kind are all
+        // dropped, also off screen, because the kind is switched as a whole.
         for e in self.entries.iter().filter(|e| e.kind == kind) {
             let key = (kind, e.original.clone());
             self.off_entries.remove(&key);
@@ -981,13 +987,51 @@ pub(super) mod tests {
         assert!(h <= start && start + B.len() <= h + 40, "{h}");
         app.update(Action::ScrollUp);
         assert_eq!(app.h_offset(), 0);
-        // Scrolled right already: selecting a value at the start scrolls back.
-        app.update(Action::FocusNext);
+    }
+
+    #[test]
+    fn horizontal_scroll_back_from_a_manual_offset() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{A} and some more text after it"));
+        app.set_pane_width(40);
         app.update(Action::ScrollRight);
-        app.update(Action::FocusNext);
-        app.update(Action::ScrollDown);
+        app.update(Action::ScrollRight);
+        assert_eq!(app.h_offset(), 8);
+        focus_findings(&mut app);
         app.update(Action::ScrollUp);
         assert_eq!(app.h_offset(), 0);
+    }
+
+    #[test]
+    fn horizontal_scroll_accounts_for_the_replacement_column() {
+        let (mut app, _) = app();
+        // An earlier finding on the line has a replacement of another length, so the
+        // replacement of B sits at another column than B.
+        paste(&mut app, &format!("{A} {}{B}\n", "x ".repeat(100)));
+        let repl = app.entries()[1].replacement.clone();
+        let o_col = app.original_line(0).find(B).unwrap();
+        let out_col = app.output_line(0).find(&repl).unwrap();
+        assert_ne!(o_col, out_col);
+        app.set_pane_width(40);
+        focus_findings(&mut app);
+        app.update(Action::ScrollDown);
+        let h = app.h_offset();
+        assert!(h <= o_col.min(out_col), "{h}");
+        assert!(o_col + B.len() <= h + 40, "{h}");
+        assert!(out_col + repl.len() <= h + 40, "{h}");
+    }
+
+    #[test]
+    fn horizontal_scroll_with_values_wider_than_the_pane_starts_at_the_left_edge() {
+        let (mut app, _) = app();
+        paste(&mut app, &format!("{}{B}\n{A}", "x ".repeat(50)));
+        app.set_pane_width(5);
+        focus_findings(&mut app);
+        app.update(Action::ScrollUp);
+        let repl = app.entries()[0].replacement.clone();
+        let o_col = app.original_line(0).find(B).unwrap();
+        let out_col = app.output_line(0).find(&repl).unwrap();
+        assert_eq!(app.h_offset(), o_col.min(out_col));
     }
 
     #[test]
