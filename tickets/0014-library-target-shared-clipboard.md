@@ -1,7 +1,7 @@
 ---
 id: "0014"
 title: Library target and shared clipboard module
-status: todo
+status: done
 depends_on: []
 ---
 

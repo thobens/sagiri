@@ -1,12 +1,9 @@
-mod filter;
-mod setup;
-mod tui;
-
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use sagiri::{filter, setup, tui};
 
 // The `about` text comes from `description` in this crate's Cargo.toml.
 #[derive(Parser)]

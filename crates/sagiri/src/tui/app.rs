@@ -7,8 +7,8 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use sagiri_core::engine::{Engine, Finding, render};
 use sagiri_core::rule::Kind;
 
-use super::clipboard::Clipboard;
 use super::ui::line_width;
+use crate::clipboard::Clipboard;
 
 /// Lines moved by a page scroll when the viewport size is not known yet.
 const DEFAULT_PAGE: usize = 10;
@@ -565,7 +565,7 @@ fn key_action(key: &KeyEvent) -> Option<Action> {
 #[cfg(test)]
 pub(super) mod tests {
     use super::*;
-    use crate::tui::clipboard::FakeClipboard;
+    use crate::clipboard::FakeClipboard;
     use sagiri_core::key::Key;
     use sagiri_core::pseudo::Pseudonymizer;
     use sagiri_core::rules::default_rules;

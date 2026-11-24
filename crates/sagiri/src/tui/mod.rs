@@ -1,7 +1,6 @@
 //! The terminal UI: paste, obfuscate, copy.
 
 pub mod app;
-pub mod clipboard;
 pub mod ui;
 
 use std::io::stdout;
@@ -13,8 +12,8 @@ use crossterm::execute;
 use ratatui::layout::Rect;
 use sagiri_core::engine::Engine;
 
+use crate::clipboard::SystemClipboard;
 use app::{App, action_for};
-use clipboard::SystemClipboard;
 
 static RESTORED: AtomicBool = AtomicBool::new(false);
 

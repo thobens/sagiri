@@ -13,7 +13,7 @@ Obfuscates pasted text with consistent, key-derived fake values. Rust workspace,
 
 - `crates/sagiri-core`: library with detection and pseudonymization. No terminal or
   clipboard I/O, no printing.
-- `crates/sagiri`: the `sagiri` binary. CLI, filter mode, TUI, clipboard.
+- `crates/sagiri`: library plus the `sagiri` binary. CLI, filter mode, TUI, clipboard.
 
 ## Hard rules
 
