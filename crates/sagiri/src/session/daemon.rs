@@ -53,8 +53,12 @@ pub fn run(parts: Parts) -> anyhow::Result<Exit> {
     Ok(exit)
 }
 
-/// Longest wait for the control thread to end. It may be busy with a client that sends
-/// nothing, for up to the server's one-second read timeout.
+/// Longest wait for the control thread to end. Normally it needs at most about a second:
+/// it may be reading from a client that sends nothing (one-second read timeout), or
+/// writing a reply (one-second write timeout, plus 0.1 s to discard an oversized request).
+/// Several silent clients queued ahead of the wake-up request each take a second, so the
+/// wait can be exceeded. `run` then returns with the socket file still in place; the
+/// process exits and leaves a stale file, which the next `Listener::bind` replaces.
 const STOP_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Ends the control thread, which removes the socket file as it ends. With the event
@@ -246,13 +250,18 @@ mod tests {
             let client_socket = socket.clone();
             let client = thread::spawn(move || {
                 assert!(!send(&client_socket, Command::Status));
-                std::fs::remove_file(&client_socket).unwrap();
+                // Created next to the socket and renamed over it, so the replacement's
+                // inode is allocated while the original still exists and cannot reuse
+                // its number. The identity check in `wake` then always sees a
+                // different file.
+                let side = client_socket.with_file_name("o.sock");
                 let other = if live_socket {
-                    Some(std::os::unix::net::UnixListener::bind(&client_socket).unwrap())
+                    Some(std::os::unix::net::UnixListener::bind(&side).unwrap())
                 } else {
-                    std::fs::write(&client_socket, "x").unwrap();
+                    std::fs::write(&side, "x").unwrap();
                     None
                 };
+                std::fs::rename(&side, &client_socket).unwrap();
                 // Quit through the event channel: the socket is no longer reachable.
                 let events = stashed.recv().unwrap();
                 let (reply, _answer) = mpsc::channel();
@@ -278,7 +287,10 @@ mod tests {
             })
             .unwrap();
             assert_eq!(exit, Exit::Quit);
-            assert!(started.elapsed() < Duration::from_secs(5));
+            // Clearly below the 3 s `STOP_TIMEOUT`: `stop_control` did not wait at all,
+            // so `wake` saw the replacement and sent nothing.
+            let waited = started.elapsed();
+            assert!(waited < Duration::from_millis(1500), "{waited:?}");
             assert!(socket.exists(), "live socket: {live_socket}");
             if !live_socket {
                 assert_eq!(std::fs::read(&socket).unwrap(), b"x");

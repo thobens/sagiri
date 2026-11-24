@@ -207,6 +207,11 @@ fn serve_with(listener: Listener, events: Sender<Event>, reply_timeout: Duration
 /// Makes a `serve` loop whose session loop is gone notice it and end, by sending it one
 /// request. Does nothing unless the file at `path` is still the socket `id` names, so a
 /// request never reaches another instance. Returns whether the request was sent.
+///
+/// The check is best effort: the file can be replaced between the check and the
+/// connect, and a filesystem that reuses inodes can give a replacement the same id. Then
+/// another instance receives one `status` request, which changes nothing, and the caller
+/// still waits only for a bounded time.
 pub fn wake(path: &Path, id: SocketId) -> bool {
     if SocketId::at(path) != Some(id) {
         return false;
