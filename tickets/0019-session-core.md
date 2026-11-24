@@ -1,7 +1,7 @@
 ---
 id: "0019"
 title: Session core
-status: todo
+status: done
 depends_on: ["0015"]
 ---
 
