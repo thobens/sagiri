@@ -1,5 +1,8 @@
 //! Session mode: while a session is active, text on the clipboard is replaced by its
 //! obfuscated form.
 
+pub mod backend;
+pub mod control;
 pub mod core;
+pub mod daemon;
 pub mod notify;

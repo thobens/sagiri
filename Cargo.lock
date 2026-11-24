@@ -1934,6 +1934,7 @@ dependencies = [
  "predicates",
  "ratatui",
  "sagiri-core",
+ "signal-hook",
  "tempfile",
  "unicode-width",
 ]

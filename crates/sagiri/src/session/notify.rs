@@ -20,6 +20,31 @@ pub trait Notifier {
     fn notify(&mut self, notice: Notice);
 }
 
+/// Writes one fixed line per notice to stderr.
+pub struct StderrNotifier;
+
+impl StderrNotifier {
+    /// The line for `notice`, without the program prefix.
+    fn line(notice: Notice) -> &'static str {
+        match notice {
+            Notice::Started => "session started",
+            Notice::Stopped => "session stopped",
+            Notice::ClipboardCleared => "the clipboard could not be replaced and was cleared",
+            Notice::OriginalStillOnClipboard => {
+                "the clipboard could not be replaced or cleared; the original is still on it"
+            }
+            Notice::PrimaryNotUpdated => "the primary selection could not be updated",
+            Notice::BackendLost => "the display connection was lost; the session ended",
+        }
+    }
+}
+
+impl Notifier for StderrNotifier {
+    fn notify(&mut self, notice: Notice) {
+        eprintln!("sagiri-session: {}", Self::line(notice));
+    }
+}
+
 #[cfg(test)]
 pub use fake::FakeNotifier;
 
@@ -59,5 +84,23 @@ mod tests {
         handle.notify(Notice::Started);
         handle.notify(Notice::Stopped);
         assert_eq!(fake.notices(), [Notice::Started, Notice::Stopped]);
+    }
+
+    #[test]
+    fn stderr_lines_are_fixed_and_distinct() {
+        use Notice::*;
+        let all = [
+            Started,
+            Stopped,
+            ClipboardCleared,
+            OriginalStillOnClipboard,
+            PrimaryNotUpdated,
+            BackendLost,
+        ];
+        let lines: std::collections::HashSet<_> =
+            all.iter().map(|&n| StderrNotifier::line(n)).collect();
+        assert_eq!(lines.len(), all.len());
+        assert_eq!(StderrNotifier::line(Started), "session started");
+        assert!(lines.iter().all(|l| !l.is_empty() && !l.contains('\n')));
     }
 }
