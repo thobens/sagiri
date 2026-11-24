@@ -33,7 +33,7 @@ sagiri-cli [-i, --in <stdin|clipboard|primary>] [-o, --out <stdout|clipboard|pri
 
   | Situation | Message | Exit |
   |---|---|---|
-  | selection cannot be written | `cannot write the clipboard: <error from the clipboard crate>` | 1 |
+  | selection cannot be written | `cannot write the clipboard: <error from the clipboard crate>` (or `cannot write the primary selection: …`) | 1 |
   | the holder did not confirm | `the clipboard could not be set` | 1 |
 
 ### Writing a selection

@@ -102,8 +102,12 @@ pub fn spawn(selection: Selection, text: &str) -> anyhow::Result<()> {
 }
 
 /// The holder's work: reads the text from `input` to its end, takes the selection, writes
-/// `ok` to `ack` and closes it, then serves the selection until it is replaced. If reading
+/// `ok` to `ack` and drops it, then serves the selection until it is replaced. If reading
 /// or taking fails, nothing is written to `ack`.
+///
+/// Dropping `ack` does not close the process's fd 1 when `ack` is stdout: std has no safe
+/// way to do that. It does no harm, because the parent reads only the `ok` line and closes
+/// its end of the pipe.
 pub fn serve(
     input: impl Read,
     mut ack: impl Write,
@@ -116,6 +120,9 @@ pub fn serve(
         .and_then(|()| ack.flush())
         .context("cannot confirm the clipboard")?;
     drop(ack);
+    // A known, short race: if another program takes the selection between `take` and this
+    // second write, the second write takes it back. arboard 3.7 offers no other way to
+    // learn that ownership was taken (`WaitConfig` is None, Forever, Until or Once).
     hold.serve_until_replaced(selection, &text)
 }
 
@@ -129,26 +136,26 @@ mod tests {
 
     type Log = Rc<RefCell<Vec<String>>>;
 
-    /// Records every call in a shared log, without the text.
+    /// Records every call, with the selection and the text, in a shared log.
     struct FakeHold {
         log: Log,
         fail_take: bool,
     }
 
     impl Hold for FakeHold {
-        fn take(&mut self, selection: Selection, _text: &str) -> anyhow::Result<()> {
-            self.log.borrow_mut().push(format!("take {selection:?}"));
+        fn take(&mut self, selection: Selection, text: &str) -> anyhow::Result<()> {
+            self.log
+                .borrow_mut()
+                .push(format!("take {selection:?} {text:?}"));
             if self.fail_take {
                 anyhow::bail!("fake take failure");
             }
             Ok(())
         }
-        fn serve_until_replaced(
-            &mut self,
-            selection: Selection,
-            _text: &str,
-        ) -> anyhow::Result<()> {
-            self.log.borrow_mut().push(format!("serve {selection:?}"));
+        fn serve_until_replaced(&mut self, selection: Selection, text: &str) -> anyhow::Result<()> {
+            self.log
+                .borrow_mut()
+                .push(format!("serve {selection:?} {text:?}"));
             Ok(())
         }
     }
@@ -188,9 +195,9 @@ mod tests {
             )
             .unwrap();
             let expected = vec![
-                format!("take {selection:?}"),
+                format!(r#"take {selection:?} "host 172.55.0.1""#),
                 r#"ack "ok\n""#.to_string(),
-                format!("serve {selection:?}"),
+                format!(r#"serve {selection:?} "host 172.55.0.1""#),
             ];
             assert_eq!(*log.borrow(), expected);
         }
@@ -208,7 +215,10 @@ mod tests {
         );
         assert!(r.is_err());
         assert!(ack.is_empty());
-        assert_eq!(*log.borrow(), vec!["take Clipboard".to_string()]);
+        assert_eq!(
+            *log.borrow(),
+            vec![r#"take Clipboard "host 172.55.0.1""#.to_string()]
+        );
     }
 
     #[test]

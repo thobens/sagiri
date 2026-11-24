@@ -258,8 +258,8 @@ fn out_clipboard_without_display_exits_1() {
 
     for sink in ["clipboard", "primary"] {
         let dir = TempDir::new().unwrap();
-        // `command()` removes `DISPLAY` and `WAYLAND_DISPLAY`, so the holder cannot take
-        // the selection and never confirms.
+        // The test helper `command()` removes `DISPLAY` and `WAYLAND_DISPLAY`, so the holder
+        // cannot take the selection and never confirms.
         let out = sagiri_cli(dir.path())
             .arg("--key-file")
             .arg(dir.path().join("key"))
@@ -273,7 +273,8 @@ fn out_clipboard_without_display_exits_1() {
         let stderr = String::from_utf8(out.stderr).unwrap();
         assert_eq!(stderr, "sagiri-cli: the clipboard could not be set\n");
 
-        // The holder has closed its stdout by now; give it a moment to be reaped.
+        // The parent saw end of input on the holder's stdout, so the holder is exiting;
+        // give it a moment to be gone.
         let start = Instant::now();
         loop {
             let left = processes_with_home(dir.path());
