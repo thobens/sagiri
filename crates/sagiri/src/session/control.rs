@@ -102,13 +102,26 @@ fn io_error(action: &'static str, path: &Path) -> impl FnOnce(io::Error) -> Bind
     }
 }
 
+/// Identifies the socket file a `Listener` created: device and inode.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SocketId(u64, u64);
+
+impl SocketId {
+    /// The id of what is at `path` now, if anything.
+    fn at(path: &Path) -> Option<Self> {
+        fs::symlink_metadata(path)
+            .ok()
+            .map(|m| Self(m.dev(), m.ino()))
+    }
+}
+
 /// The bound control socket. Dropping it removes the socket file.
 pub struct Listener {
     inner: UnixListener,
     path: PathBuf,
-    /// Device and inode of the socket file this listener created, so that drop never
-    /// removes a file that has since been replaced.
-    id: (u64, u64),
+    /// The socket file this listener created, so that nothing ever removes a file that
+    /// has since been replaced. `None` only while `bind` has not inspected it yet.
+    id: Option<SocketId>,
 }
 
 impl Listener {
@@ -138,25 +151,32 @@ impl Listener {
             Err(e) => return Err(io_error("inspect", path)(e)),
         }
         let inner = UnixListener::bind(path).map_err(io_error("bind socket", path))?;
-        // From here on, dropping `listener` removes the file again.
-        // (0, 0) until the file is inspected: drop then removes whatever is at the path.
+        // From here on, dropping `listener` removes the file again. Until the file is
+        // inspected, drop removes whatever is at the path: it was bound a moment ago.
         let mut listener = Self {
             inner,
             path: path.to_path_buf(),
-            id: (0, 0),
+            id: None,
         };
         let meta = fs::symlink_metadata(path).map_err(io_error("inspect", path))?;
-        listener.id = (meta.dev(), meta.ino());
+        listener.id = Some(SocketId(meta.dev(), meta.ino()));
         fs::set_permissions(path, Permissions::from_mode(0o600))
             .map_err(io_error("set permissions of", path))?;
         Ok(listener)
+    }
+
+    /// The socket file this listener created.
+    pub fn id(&self) -> Option<SocketId> {
+        self.id
     }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let ours = fs::symlink_metadata(&self.path)
-            .is_ok_and(|m| self.id == (0, 0) || (m.dev(), m.ino()) == self.id);
+        let ours = match self.id {
+            None => true,
+            Some(id) => SocketId::at(&self.path) == Some(id),
+        };
         if ours {
             let _ = fs::remove_file(&self.path);
         }
@@ -167,15 +187,33 @@ impl Drop for Listener {
 /// (`events` or a reply channel is closed). Then the listener is dropped and the socket
 /// file removed.
 pub fn serve(listener: Listener, events: Sender<Event>) {
+    serve_with(listener, events, REPLY_TIMEOUT);
+}
+
+/// `serve` with an explicit wait for the session loop's answer.
+fn serve_with(listener: Listener, events: Sender<Event>, reply_timeout: Duration) {
     for stream in listener.inner.incoming() {
         let Ok(stream) = stream else {
             // For example too many open files; do not spin.
             std::thread::sleep(Duration::from_millis(50));
             continue;
         };
-        if handle(stream, &events).is_break() {
+        if handle(stream, &events, reply_timeout).is_break() {
             return;
         }
+    }
+}
+
+/// Makes a `serve` loop whose session loop is gone notice it and end, by sending it one
+/// request. Does nothing unless the file at `path` is still the socket `id` names, so a
+/// request never reaches another instance. Returns whether the request was sent.
+pub fn wake(path: &Path, id: SocketId) -> bool {
+    if SocketId::at(path) != Some(id) {
+        return false;
+    }
+    match UnixStream::connect(path) {
+        Ok(mut stream) => stream.write_all(b"status\n").is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -224,7 +262,11 @@ fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, ReadError> {
 }
 
 /// Handles one connection. `Break` means the session loop is gone.
-fn handle(mut stream: UnixStream, events: &Sender<Event>) -> ControlFlow<()> {
+fn handle(
+    mut stream: UnixStream,
+    events: &Sender<Event>,
+    reply_timeout: Duration,
+) -> ControlFlow<()> {
     let reply = match read_request(&mut stream) {
         Err(ReadError::TooLong) => TOO_LONG,
         Err(ReadError::Timeout) => TIMEOUT,
@@ -235,10 +277,14 @@ fn handle(mut stream: UnixStream, events: &Sender<Event>) -> ControlFlow<()> {
                 None => UNKNOWN_COMMAND,
                 Some(command) => {
                     let (tx, rx) = mpsc::channel();
+                    // The session loop is gone, either before this request was sent or
+                    // after it was queued behind one that ended the loop (a `quit` from
+                    // another client). Either way the connection closes without a reply,
+                    // which the client reports as an invalid reply.
                     if events.send(Event::Command { command, reply: tx }).is_err() {
                         return ControlFlow::Break(());
                     }
-                    match rx.recv_timeout(REPLY_TIMEOUT) {
+                    match rx.recv_timeout(reply_timeout) {
                         Ok(active) => reply_line(active),
                         Err(RecvTimeoutError::Timeout) => TIMEOUT,
                         Err(RecvTimeoutError::Disconnected) => return ControlFlow::Break(()),
@@ -272,6 +318,11 @@ pub enum RequestError {
     Server(String),
     /// The reply was not part of the protocol.
     BadReply,
+    /// Connecting failed for another reason, for example a path that is too long.
+    Connect {
+        path: PathBuf,
+        source: io::Error,
+    },
     Io(io::Error),
 }
 
@@ -283,6 +334,9 @@ impl fmt::Display for RequestError {
             }
             Self::Server(reason) => f.write_str(reason),
             Self::BadReply => f.write_str("the session process sent an invalid reply"),
+            Self::Connect { path, source } => {
+                write!(f, "cannot connect to {}: {source}", path.display())
+            }
             Self::Io(e) => write!(f, "cannot talk to the session process: {e}"),
         }
     }
@@ -303,7 +357,12 @@ pub fn request(path: &Path, command: Command) -> Result<bool, RequestError> {
         Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) => {
             return Err(RequestError::NotRunning);
         }
-        Err(e) => return Err(e.into()),
+        Err(source) => {
+            return Err(RequestError::Connect {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
     };
     stream.set_read_timeout(Some(CLIENT_TIMEOUT))?;
     stream.set_write_timeout(Some(CLIENT_TIMEOUT))?;
@@ -443,10 +502,76 @@ mod tests {
         let started = Instant::now();
         assert!(request(&path, Command::Status).unwrap());
         let waited = started.elapsed();
-        assert!(waited < Duration::from_millis(2500), "{waited:?}");
+        // About 0.9 s: the read timeout minus the head start above.
+        assert!(waited < Duration::from_millis(1500), "{waited:?}");
         let mut reply = String::new();
         silent.read_to_string(&mut reply).unwrap();
         assert_eq!(reply, "error timeout\n");
+    }
+
+    #[test]
+    fn slow_session_gets_timeout_reply() {
+        let (_dir, path) = socket();
+        let listener = Listener::bind(&path).unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || serve_with(listener, tx, Duration::from_millis(100)));
+        // A session loop that takes the commands but never answers them.
+        thread::spawn(move || {
+            let mut held = Vec::new();
+            for event in rx {
+                held.push(event);
+            }
+        });
+        let err = request(&path, Command::Start).unwrap_err();
+        assert!(
+            matches!(&err, RequestError::Server(r) if r == "timeout"),
+            "{err:?}"
+        );
+        // Printed as the bare reason.
+        assert_eq!(err.to_string(), "timeout");
+    }
+
+    #[test]
+    fn wake_ends_a_serve_loop_without_session() {
+        let (_dir, path) = socket();
+        let listener = Listener::bind(&path).unwrap();
+        let id = listener.id().unwrap();
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        let server = thread::spawn(move || serve(listener, tx));
+        assert!(wake(&path, id));
+        server.join().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn wake_leaves_a_replaced_socket_alone() {
+        let (_dir, path) = socket();
+        let listener = Listener::bind(&path).unwrap();
+        let id = listener.id().unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(!wake(&path, id));
+        let other = UnixListener::bind(&path).unwrap();
+        other.set_nonblocking(true).unwrap();
+        assert!(!wake(&path, id));
+        // No connection reached the other socket, and dropping the first listener
+        // leaves the other's file in place.
+        assert!(other.accept().is_err());
+        drop(listener);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn connect_error_names_the_path() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("s".repeat(200));
+        let err = request(&path, Command::Status).unwrap_err();
+        assert!(matches!(err, RequestError::Connect { .. }), "{err:?}");
+        let message = err.to_string();
+        assert!(
+            message.starts_with(&format!("cannot connect to {}: ", path.display())),
+            "{message}"
+        );
     }
 
     #[test]

@@ -2,13 +2,12 @@
 //!
 //! Installs no signal handlers itself, so tests can run it in-process.
 
-use std::io::Write as _;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Sender};
-use std::thread::{self, JoinHandle};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
 
-use super::control::{self, Listener};
+use super::control::{self, Listener, SocketId};
 use super::core::{Event, Exit, Session, run_loop};
 
 /// Everything `run` needs.
@@ -32,35 +31,41 @@ pub fn run(parts: Parts) -> anyhow::Result<Exit> {
         sources,
     } = parts;
     let listener = Listener::bind(&socket)?;
+    let id = listener.id();
     let (events, receiver) = mpsc::channel();
     // On error, `listener` is dropped here and removes the socket file.
     sources(events.clone())?;
-    let control = thread::Builder::new()
+    let (done_tx, done) = mpsc::channel();
+    thread::Builder::new()
         .name("control".into())
-        .spawn(move || control::serve(listener, events))?;
+        .spawn(move || {
+            // `serve` drops the listener, and with it removes the socket file, before
+            // `done` is signalled.
+            control::serve(listener, events);
+            let _ = done_tx.send(());
+        })?;
     if start_active {
         session.set_active(true);
     }
     let exit = run_loop(&mut session, &receiver);
     drop(receiver);
-    stop_control(&socket, control);
+    stop_control(&socket, id, &done);
     Ok(exit)
 }
 
+/// Longest wait for the control thread to end. It may be busy with a client that sends
+/// nothing, for up to the server's one-second read timeout.
+const STOP_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Ends the control thread, which removes the socket file as it ends. With the event
 /// receiver gone, the next request it handles makes it stop, so one is sent here.
-fn stop_control(socket: &Path, control: JoinHandle<()>) {
-    match UnixStream::connect(socket) {
-        Ok(mut stream) => {
-            let _ = stream.write_all(b"status\n");
-            drop(stream);
-            let _ = control.join();
-        }
-        // The socket is unreachable, so the thread cannot be woken. Remove the file in
-        // its place; the thread ends with the process.
-        Err(_) => {
-            let _ = std::fs::remove_file(socket);
-        }
+///
+/// If the socket file was deleted or replaced by another instance, the thread cannot be
+/// reached. It is then left blocked, ends with the process, and the file at the path is
+/// not touched. The wait is bounded either way, so this never hangs.
+fn stop_control(socket: &Path, id: Option<SocketId>, done: &Receiver<()>) {
+    if id.is_some_and(|id| control::wake(socket, id)) {
+        let _ = done.recv_timeout(STOP_TIMEOUT);
     }
 }
 
@@ -221,6 +226,66 @@ mod tests {
         // Nothing else happened: the session was never started.
         assert!(notices.notices().is_empty());
         assert_eq!(selections.reads(Selection::Clipboard), 0);
+    }
+
+    /// The socket file is deleted while the daemon runs and something else takes its
+    /// path: another instance's socket, or an unrelated file. Ending the daemon then
+    /// neither hangs nor removes what is at the path.
+    #[test]
+    fn replaced_socket_is_left_alone_on_exit() {
+        for live_socket in [true, false] {
+            let dir = TempDir::new().unwrap();
+            let socket = dir.path().join("s.sock");
+            let session = Session::new(
+                engine(),
+                Box::new(FakeSelections::default()),
+                Box::new(FakeNotifier::default()),
+            );
+            let (stash, stashed) = mpsc::channel::<Sender<Event>>();
+            let (finished, wait_finished) = mpsc::channel::<()>();
+            let client_socket = socket.clone();
+            let client = thread::spawn(move || {
+                assert!(!send(&client_socket, Command::Status));
+                std::fs::remove_file(&client_socket).unwrap();
+                let other = if live_socket {
+                    Some(std::os::unix::net::UnixListener::bind(&client_socket).unwrap())
+                } else {
+                    std::fs::write(&client_socket, "x").unwrap();
+                    None
+                };
+                // Quit through the event channel: the socket is no longer reachable.
+                let events = stashed.recv().unwrap();
+                let (reply, _answer) = mpsc::channel();
+                events
+                    .send(Event::Command {
+                        command: Command::Quit,
+                        reply,
+                    })
+                    .unwrap();
+                // Keep the other socket alive until the daemon has finished.
+                let _ = wait_finished.recv_timeout(Duration::from_secs(30));
+                drop(other);
+            });
+            let started = Instant::now();
+            let exit = run(Parts {
+                session,
+                socket: socket.clone(),
+                start_active: false,
+                sources: Box::new(move |events| {
+                    stash.send(events).unwrap();
+                    Ok(())
+                }),
+            })
+            .unwrap();
+            assert_eq!(exit, Exit::Quit);
+            assert!(started.elapsed() < Duration::from_secs(5));
+            assert!(socket.exists(), "live socket: {live_socket}");
+            if !live_socket {
+                assert_eq!(std::fs::read(&socket).unwrap(), b"x");
+            }
+            finished.send(()).unwrap();
+            client.join().unwrap();
+        }
     }
 
     #[test]

@@ -90,17 +90,29 @@ mod tests {
     fn stderr_lines_are_fixed_and_distinct() {
         use Notice::*;
         let all = [
-            Started,
-            Stopped,
-            ClipboardCleared,
-            OriginalStillOnClipboard,
-            PrimaryNotUpdated,
-            BackendLost,
+            (Started, "session started"),
+            (Stopped, "session stopped"),
+            (
+                ClipboardCleared,
+                "the clipboard could not be replaced and was cleared",
+            ),
+            (
+                OriginalStillOnClipboard,
+                "the clipboard could not be replaced or cleared; the original is still on it",
+            ),
+            (
+                PrimaryNotUpdated,
+                "the primary selection could not be updated",
+            ),
+            (
+                BackendLost,
+                "the display connection was lost; the session ended",
+            ),
         ];
-        let lines: std::collections::HashSet<_> =
-            all.iter().map(|&n| StderrNotifier::line(n)).collect();
+        for (notice, line) in all {
+            assert_eq!(StderrNotifier::line(notice), line, "{notice:?}");
+        }
+        let lines: std::collections::HashSet<_> = all.iter().map(|(_, l)| l).collect();
         assert_eq!(lines.len(), all.len());
-        assert_eq!(StderrNotifier::line(Started), "session started");
-        assert!(lines.iter().all(|l| !l.is_empty() && !l.contains('\n')));
     }
 }
