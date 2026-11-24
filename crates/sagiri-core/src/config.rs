@@ -43,6 +43,9 @@ pub enum ConfigError {
         key: String,
         reason: &'static str,
     },
+    /// The default location cannot be resolved for a reason other than a missing `HOME`.
+    #[error(transparent)]
+    Path(#[from] PathError),
 }
 
 struct PathPrefix<'a>(&'a Option<PathBuf>);
@@ -217,7 +220,10 @@ pub fn resolve_path(
     // Without HOME and a usable XDG_CONFIG_HOME there is no default location: no file.
     let dir = match paths::config_dir_with(env) {
         Ok(dir) => dir,
-        Err(PathError::NoHome | PathError::NoRuntimeDir) => return Ok(None),
+        Err(PathError::NoHome) => return Ok(None),
+        // `config_dir_with` returns no other error today. Should one appear, it is
+        // reported rather than taken to mean "no config file".
+        Err(e) => return Err(e.into()),
     };
     let p = dir.join("config.toml");
     Ok(p.exists().then_some(p))
@@ -243,6 +249,16 @@ fn parse(src: &str, path: &Path) -> Result<Config, ConfigError> {
     };
     let table = toml::de::DeTable::parse(src)
         .map_err(|e| err(e.span().map(|s| s.start), e.message().to_string()))?;
+    // serde also accepts an array for a struct and fills the fields in order, so
+    // `session` must be checked to be a table before deserializing.
+    if let Some(v) = table.get_ref().get("session")
+        && !matches!(v.get_ref(), toml::de::DeValue::Table(_))
+    {
+        return Err(err(
+            Some(v.span().start),
+            "`session`: expected a table".to_string(),
+        ));
+    }
     toml::from_str::<Config>(src).map_err(|e| {
         let start = e.span().map(|s| s.start);
         // The message of an unknown field names only the key. Other messages quote the
@@ -696,6 +712,9 @@ notify = true
         let c = load_str("[session]\nnotify = false\nhotkey = \"not checked here\"").unwrap();
         assert!(!c.session.notify);
         assert_eq!(c.session.hotkey.as_deref(), Some("not checked here"));
+        for src in ["session = { notify = false }", "session.notify = false"] {
+            assert!(!load_str(src).unwrap().session.notify, "{src}");
+        }
     }
 
     #[test]
@@ -760,9 +779,17 @@ notify = true
 
     #[test]
     fn session_that_is_not_a_table_is_error() {
-        let msg = load_str("session = \"hush\"").unwrap_err().to_string();
-        assert!(msg.contains("`session`: expected a table"), "{msg}");
-        assert!(msg.contains("config.toml: line 1"), "{msg}");
-        assert!(!msg.contains("hush"), "{msg}");
+        for src in [
+            "session = \"hush\"",
+            "session = []",
+            "session = [\"hush\", \"watch\", false]",
+            "session = [\"hush\", \"watch\", false, 1]",
+            "session = true",
+        ] {
+            let msg = load_str(src).unwrap_err().to_string();
+            assert!(msg.contains("`session`: expected a table"), "{msg}");
+            assert!(msg.contains("config.toml: line 1, column 11"), "{msg}");
+            assert!(!msg.contains("hush"), "{msg}");
+        }
     }
 }
