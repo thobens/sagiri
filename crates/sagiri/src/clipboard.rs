@@ -122,22 +122,22 @@ impl Clipboard for SystemClipboard {
 
 impl SelectionClipboard for SystemClipboard {
     fn read(&mut self, selection: Selection) -> anyhow::Result<Content> {
-        let cb = self.open()?;
         platform::check(selection)?;
+        let cb = self.open()?;
         let files = probe(platform::file_list(cb, selection).map(|f| f.len()));
         let text = probe(platform::text(cb, selection));
         classify(files, text)
     }
 
     fn write_text(&mut self, selection: Selection, text: &str) -> anyhow::Result<()> {
-        let cb = self.open()?;
         platform::check(selection)?;
+        let cb = self.open()?;
         Ok(platform::set_text(cb, selection, text)?)
     }
 
     fn clear(&mut self, selection: Selection) -> anyhow::Result<()> {
-        let cb = self.open()?;
         platform::check(selection)?;
+        let cb = self.open()?;
         Ok(platform::clear(cb, selection)?)
     }
 }
