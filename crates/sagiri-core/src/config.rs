@@ -90,6 +90,41 @@ pub struct Config {
     /// Literal terms that are always replaced.
     pub terms: Vec<String>,
     pub rules: RuleToggles,
+    /// Settings read by `sagiri-session` only.
+    pub session: SessionConfig,
+}
+
+/// Settings of session mode. Other binaries ignore them.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SessionConfig {
+    /// The hotkey as written in the file; its syntax is checked elsewhere.
+    pub hotkey: Option<String>,
+    /// How the PRIMARY selection is treated.
+    pub primary: PrimaryMode,
+    /// Whether desktop notifications are shown.
+    pub notify: bool,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        SessionConfig {
+            hotkey: None,
+            primary: PrimaryMode::Off,
+            notify: true,
+        }
+    }
+}
+
+/// How session mode treats the PRIMARY selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrimaryMode {
+    /// PRIMARY is left alone.
+    #[default]
+    Off,
+    Mirror,
+    Watch,
 }
 
 /// One switch per rule. Rules are on unless switched off.
@@ -182,7 +217,7 @@ pub fn resolve_path(
     // Without HOME and a usable XDG_CONFIG_HOME there is no default location: no file.
     let dir = match paths::config_dir_with(env) {
         Ok(dir) => dir,
-        Err(PathError::NoHome) => return Ok(None),
+        Err(PathError::NoHome | PathError::NoRuntimeDir) => return Ok(None),
     };
     let p = dir.join("config.toml");
     Ok(p.exists().then_some(p))
@@ -229,7 +264,7 @@ fn locate(table: &toml::de::DeTable<'_>, offset: usize) -> Option<(String, &'sta
     for (k, v) in table {
         let key: &str = k.get_ref().as_ref();
         // The span of a `[table]` covers its header only, so look inside it.
-        if !v.span().contains(&offset) && key != "rules" {
+        if !v.span().contains(&offset) && key != "rules" && key != "session" {
             continue;
         }
         let found = match (key, v.get_ref()) {
@@ -245,8 +280,21 @@ fn locate(table: &toml::de::DeTable<'_>, offset: usize) -> Option<(String, &'sta
                     let rk: &str = rk.get_ref().as_ref();
                     (format!("rules.{rk}"), "expected a boolean")
                 }),
-            ("rules", _) if v.span().contains(&offset) => {
-                Some(("rules".to_string(), "expected a table"))
+            ("session", DeValue::Table(session)) => session
+                .iter()
+                .find(|(_, x)| x.span().contains(&offset))
+                .map(|(sk, _)| {
+                    let sk: &str = sk.get_ref().as_ref();
+                    let expected = match sk {
+                        "hotkey" => "expected a string",
+                        "primary" => r#"expected "off", "mirror" or "watch""#,
+                        "notify" => "expected a boolean",
+                        _ => "invalid value",
+                    };
+                    (format!("session.{sk}"), expected)
+                }),
+            ("rules" | "session", _) if v.span().contains(&offset) => {
+                Some((key.to_string(), "expected a table"))
             }
             _ => None,
         };
@@ -459,6 +507,7 @@ phone = false
                 phone: false,
                 ..RuleToggles::default()
             },
+            session: SessionConfig::default(),
         };
         assert_eq!(c, expected);
     }
@@ -617,5 +666,103 @@ phone = false
         assert!(e.contains("terms[1]") && e.contains("config.toml"), "{e}");
         let e = load_str("terms = [\"a\\nb\"]").unwrap_err().to_string();
         assert!(e.contains("terms[0]"), "{e}");
+    }
+    #[test]
+    fn session_defaults() {
+        let c = load_str("").unwrap();
+        assert_eq!(c.session.hotkey, None);
+        assert_eq!(c.session.primary, PrimaryMode::Off);
+        assert!(c.session.notify);
+        assert_eq!(c.session, SessionConfig::default());
+    }
+
+    #[test]
+    fn session_section_parses() {
+        let c = load_str(
+            r#"
+[session]
+hotkey = "ctrl+alt+o"
+primary = "mirror"
+notify = true
+"#,
+        )
+        .unwrap();
+        let expected = SessionConfig {
+            hotkey: Some("ctrl+alt+o".to_string()),
+            primary: PrimaryMode::Mirror,
+            notify: true,
+        };
+        assert_eq!(c.session, expected);
+        let c = load_str("[session]\nnotify = false\nhotkey = \"not checked here\"").unwrap();
+        assert!(!c.session.notify);
+        assert_eq!(c.session.hotkey.as_deref(), Some("not checked here"));
+    }
+
+    #[test]
+    fn session_primary_accepts_all_three_words() {
+        for (word, mode) in [
+            ("off", PrimaryMode::Off),
+            ("mirror", PrimaryMode::Mirror),
+            ("watch", PrimaryMode::Watch),
+        ] {
+            let c = load_str(&format!("[session]\nprimary = \"{word}\"")).unwrap();
+            assert_eq!(c.session.primary, mode, "{word}");
+        }
+    }
+
+    #[test]
+    fn unknown_session_key_is_error() {
+        let msg = load_str("[session]\nnotify = true\nbogus = true")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("bogus"), "{msg}");
+        assert!(msg.contains("config.toml"), "{msg}");
+        assert!(msg.contains("line 3, column 1"), "{msg}");
+    }
+
+    #[test]
+    fn invalid_primary_value_is_error() {
+        for src in ["[session]\nprimary = \"on\"", "[session]\nprimary = 1"] {
+            let msg = load_str(src).unwrap_err().to_string();
+            assert!(
+                msg.contains(r#"`session.primary`: expected "off", "mirror" or "watch""#),
+                "{msg}"
+            );
+            assert!(msg.contains("line 2"), "{msg}");
+            // `on` itself occurs in "session" and "column"; the quoted value must not.
+            assert!(!msg.contains("\"on\"") && !msg.contains("`on`"), "{msg}");
+        }
+        let msg = load_str("[session]\nprimary = \"hush\"")
+            .unwrap_err()
+            .to_string();
+        assert!(!msg.contains("hush"), "{msg}");
+    }
+
+    #[test]
+    fn wrong_type_for_hotkey_and_notify_is_error() {
+        let cases = [
+            (
+                "[session]\nhotkey = 5",
+                "`session.hotkey`: expected a string",
+            ),
+            (
+                "[session]\nnotify = \"hush\"",
+                "`session.notify`: expected a boolean",
+            ),
+        ];
+        for (src, expected) in cases {
+            let msg = load_str(src).unwrap_err().to_string();
+            assert!(msg.contains(expected), "{msg}");
+            assert!(msg.contains("config.toml: line 2"), "{msg}");
+            assert!(!msg.contains("hush"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn session_that_is_not_a_table_is_error() {
+        let msg = load_str("session = \"hush\"").unwrap_err().to_string();
+        assert!(msg.contains("`session`: expected a table"), "{msg}");
+        assert!(msg.contains("config.toml: line 1"), "{msg}");
+        assert!(!msg.contains("hush"), "{msg}");
     }
 }

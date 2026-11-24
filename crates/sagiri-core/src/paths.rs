@@ -12,6 +12,9 @@ pub enum PathError {
     /// `HOME` was needed but is unset or empty.
     #[error("HOME is not set; set HOME or the relevant XDG_* variable")]
     NoHome,
+    /// `XDG_RUNTIME_DIR` is unset, empty or relative. There is no fallback.
+    #[error("XDG_RUNTIME_DIR is not set to an absolute path")]
+    NoRuntimeDir,
 }
 
 /// `$XDG_CONFIG_HOME/sagiri`, default `$HOME/.config/sagiri`.
@@ -32,6 +35,22 @@ pub fn data_dir() -> Result<PathBuf, PathError> {
 /// Like [`data_dir`] with an explicit environment.
 pub fn data_dir_with(env: EnvLookup<'_>) -> Result<PathBuf, PathError> {
     xdg_dir(env, "XDG_DATA_HOME", ".local/share")
+}
+
+/// `$XDG_RUNTIME_DIR/sagiri`. Only computes the path; creates nothing.
+pub fn runtime_dir() -> Result<PathBuf, PathError> {
+    runtime_dir_with(&|k| std::env::var_os(k))
+}
+
+/// Like [`runtime_dir`] with an explicit environment.
+///
+/// An unset, empty or relative `XDG_RUNTIME_DIR` is an error. A shared temporary
+/// directory would be unsafe for a control socket, so there is no fallback.
+pub fn runtime_dir_with(env: EnvLookup<'_>) -> Result<PathBuf, PathError> {
+    match env("XDG_RUNTIME_DIR").map(PathBuf::from) {
+        Some(p) if p.is_absolute() => Ok(p.join("sagiri")),
+        _ => Err(PathError::NoRuntimeDir),
+    }
 }
 
 fn xdg_dir(env: EnvLookup<'_>, var: &str, default_rel: &str) -> Result<PathBuf, PathError> {
@@ -107,5 +126,34 @@ mod tests {
                 assert!(matches!(f(&env), Err(PathError::NoHome)));
             }
         }
+    }
+
+    #[test]
+    fn runtime_dir_uses_xdg_runtime_dir() {
+        let env = env_of(&[("XDG_RUNTIME_DIR", "/run/user/1000"), ("HOME", "/home/u")]);
+        assert_eq!(
+            runtime_dir_with(&env).unwrap(),
+            PathBuf::from("/run/user/1000/sagiri")
+        );
+    }
+
+    #[test]
+    fn runtime_dir_unset_empty_or_relative_is_error() {
+        for pairs in [
+            vec![],
+            vec![("HOME", "/home/u")],
+            vec![("XDG_RUNTIME_DIR", ""), ("HOME", "/home/u")],
+            vec![("XDG_RUNTIME_DIR", "run/user/1000"), ("HOME", "/home/u")],
+        ] {
+            let env = env_of(&pairs);
+            assert!(
+                matches!(runtime_dir_with(&env), Err(PathError::NoRuntimeDir)),
+                "{pairs:?}"
+            );
+        }
+        assert_eq!(
+            PathError::NoRuntimeDir.to_string(),
+            "XDG_RUNTIME_DIR is not set to an absolute path"
+        );
     }
 }

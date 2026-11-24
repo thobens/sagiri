@@ -1,7 +1,7 @@
 ---
 id: "0018"
 title: Session settings and runtime directory
-status: todo
+status: done
 depends_on: ["0014"]
 ---
 

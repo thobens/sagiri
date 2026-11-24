@@ -119,6 +119,23 @@ phone = false
   `iban` and `phone`.
 - Unknown keys are errors, so that a typo does not silently disable protection.
 
+### Session settings
+
+The `[session]` table is read by `sagiri-session` only. It has no effect on `sagiri` and
+`sagiri-cli`.
+
+```toml
+[session]
+hotkey = "ctrl+alt+o"
+primary = "mirror"
+notify = true
+```
+
+- `hotkey` (default: none) is the key combination that obfuscates the clipboard.
+- `primary` (default: `"off"`) sets how the PRIMARY selection is treated: `"off"`,
+  `"mirror"` or `"watch"`.
+- `notify` (default: `true`) switches desktop notifications on or off.
+
 Warning: the config file contains the sensitive terms in plain text. Do not share it and do
 not commit it to a repository.
 
