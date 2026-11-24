@@ -3,7 +3,7 @@ name: implementer
 description: Implements one ticket from tickets/ on its own branch
 isolation: worktree
 tools: Read, Edit, Write, Bash, WebFetch, WebSearch
-model: sonnet
+model: opus
 effort: medium
 ---
 You implement exactly one ticket of this repository, inside your own git worktree.
