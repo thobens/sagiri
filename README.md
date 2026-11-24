@@ -12,6 +12,7 @@ Status: pre-MVP.
 ```
 cargo build
 cargo run -p sagiri -- --help
+cargo run -p sagiri --bin sagiri-cli -- --help
 ```
 
 ## Usage
@@ -44,6 +45,33 @@ Known limitation: a bare hostname that ends in a top-level domain that is also a
 file extension or identifier in code (`.rs`, `.py`, `.md`, `.zip`, `.id`, `.name`, `.sh`
 and similar) is not detected, so that `main.rs` and `user.name` stay untouched. The same
 name inside a URL is still replaced.
+
+### `sagiri-cli`
+
+`sagiri-cli` never opens a UI. It reads text from the selected input, obfuscates it and
+writes it to stdout, with the same replacements as `sagiri`.
+
+```
+sagiri-cli [-i, --in <stdin|clipboard|primary>] [-n, --trim-newline]
+           [--key-file <PATH>] [--config <PATH>]
+```
+
+```
+sagiri-cli < input.txt
+sagiri-cli --in clipboard
+```
+
+- `--in stdin` (the default) reads stdin to its end. Without `--in`, a terminal on stdin is
+  refused instead of waiting for input.
+- `--in clipboard` reads the clipboard, `--in primary` the primary selection (Linux). The
+  selection is only read, never changed.
+- `-n` removes one trailing line break (`\n` or `\r\n`) from the output.
+- `--key-file` and `--config` work as for `sagiri`.
+
+Exit codes: 0 success; 1 runtime error (input that is not valid UTF-8, a selection that
+holds files or no text, a clipboard that cannot be read, a key or config error); 2 usage
+error (an invalid flag, or no `--in` with a terminal on stdin). On an error nothing is
+written to stdout.
 
 ## Configuration
 

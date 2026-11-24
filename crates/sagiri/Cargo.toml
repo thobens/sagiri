@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 description = "Sagiri obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones."
+default-run = "sagiri"
 
 [dependencies]
 anyhow = "1.0.104"

@@ -1,7 +1,7 @@
 ---
 id: "0016"
 title: "sagiri-cli: selectable input"
-status: todo
+status: done
 depends_on: ["0015"]
 ---
 

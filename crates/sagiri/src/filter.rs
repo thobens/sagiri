@@ -8,13 +8,22 @@ use sagiri_core::engine::Engine;
 /// Reads all of `input`, writes the obfuscated text to `output`.
 ///
 /// The output is exactly the transformed text. A broken pipe on `output` is not an error.
-pub fn run(engine: &Engine, mut input: impl Read, mut output: impl Write) -> anyhow::Result<()> {
+pub fn run(engine: &Engine, input: impl Read, output: impl Write) -> anyhow::Result<()> {
+    let text = read_text(input)?;
+    write_text(output, &engine.obfuscate(&text))
+}
+
+/// Reads `input` to its end. The bytes must be valid UTF-8.
+pub fn read_text(mut input: impl Read) -> anyhow::Result<String> {
     let mut bytes = Vec::new();
     input.read_to_end(&mut bytes).context("cannot read input")?;
-    let text = String::from_utf8(bytes).map_err(|_| anyhow!("input is not valid UTF-8"))?;
-    let result = engine.obfuscate(&text);
+    String::from_utf8(bytes).map_err(|_| anyhow!("input is not valid UTF-8"))
+}
+
+/// Writes `text` to `output` and flushes it. A broken pipe is not an error.
+pub fn write_text(mut output: impl Write, text: &str) -> anyhow::Result<()> {
     match output
-        .write_all(result.as_bytes())
+        .write_all(text.as_bytes())
         .and_then(|()| output.flush())
     {
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
