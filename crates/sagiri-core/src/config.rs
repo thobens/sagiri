@@ -43,9 +43,6 @@ pub enum ConfigError {
         key: String,
         reason: &'static str,
     },
-    /// The default location cannot be resolved for a reason other than a missing `HOME`.
-    #[error(transparent)]
-    Path(#[from] PathError),
 }
 
 struct PathPrefix<'a>(&'a Option<PathBuf>);
@@ -221,9 +218,8 @@ pub fn resolve_path(
     let dir = match paths::config_dir_with(env) {
         Ok(dir) => dir,
         Err(PathError::NoHome) => return Ok(None),
-        // `config_dir_with` returns no other error today. Should one appear, it is
-        // reported rather than taken to mean "no config file".
-        Err(e) => return Err(e.into()),
+        // Never returned by `config_dir_with`; listed only to keep the match exhaustive.
+        Err(PathError::NoRuntimeDir) => return Ok(None),
     };
     let p = dir.join("config.toml");
     Ok(p.exists().then_some(p))
@@ -309,8 +305,9 @@ fn locate(table: &toml::de::DeTable<'_>, offset: usize) -> Option<(String, &'sta
                     };
                     (format!("session.{sk}"), expected)
                 }),
-            ("rules" | "session", _) if v.span().contains(&offset) => {
-                Some((key.to_string(), "expected a table"))
+            // A `session` that is not a table is rejected in `parse` before this runs.
+            ("rules", _) if v.span().contains(&offset) => {
+                Some(("rules".to_string(), "expected a table"))
             }
             _ => None,
         };
@@ -791,5 +788,11 @@ notify = true
             assert!(msg.contains("config.toml: line 1, column 11"), "{msg}");
             assert!(!msg.contains("hush"), "{msg}");
         }
+        let msg = load_str("[[session]]\nhotkey = \"hush\"")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("`session`: expected a table"), "{msg}");
+        assert!(msg.contains("config.toml: line 1"), "{msg}");
+        assert!(!msg.contains("hush"), "{msg}");
     }
 }

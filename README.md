@@ -132,7 +132,7 @@ notify = true
 ```
 
 - `hotkey` (default: none) is a key combination that `sagiri-session` grabs to switch the
-  session on and off, like the `toggle` command.
+  session on and off.
 - `primary` (default: `"off"`) sets how the PRIMARY selection is treated: `"off"`,
   `"mirror"` or `"watch"`.
 - `notify` (default: `true`) switches desktop notifications on or off.
