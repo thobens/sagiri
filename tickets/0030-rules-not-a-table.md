@@ -1,7 +1,7 @@
 ---
 id: "0030"
 title: Reject a `rules` value that is not a table
-status: todo
+status: done
 depends_on: ["0018"]
 ---
 

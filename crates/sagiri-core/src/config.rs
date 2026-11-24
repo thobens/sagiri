@@ -246,14 +246,17 @@ fn parse(src: &str, path: &Path) -> Result<Config, ConfigError> {
     let table = toml::de::DeTable::parse(src)
         .map_err(|e| err(e.span().map(|s| s.start), e.message().to_string()))?;
     // serde also accepts an array for a struct and fills the fields in order, so
-    // `session` must be checked to be a table before deserializing.
-    if let Some(v) = table.get_ref().get("session")
-        && !matches!(v.get_ref(), toml::de::DeValue::Table(_))
-    {
-        return Err(err(
-            Some(v.span().start),
-            "`session`: expected a table".to_string(),
-        ));
+    // `rules` and `session` must be checked to be tables before deserializing. A later
+    // key whose value is a table belongs in this list as well.
+    for key in ["rules", "session"] {
+        if let Some(v) = table.get_ref().get(key)
+            && !matches!(v.get_ref(), toml::de::DeValue::Table(_))
+        {
+            return Err(err(
+                Some(v.span().start),
+                format!("`{key}`: expected a table"),
+            ));
+        }
     }
     toml::from_str::<Config>(src).map_err(|e| {
         let start = e.span().map(|s| s.start);
@@ -305,10 +308,8 @@ fn locate(table: &toml::de::DeTable<'_>, offset: usize) -> Option<(String, &'sta
                     };
                     (format!("session.{sk}"), expected)
                 }),
-            // A `session` that is not a table is rejected in `parse` before this runs.
-            ("rules", _) if v.span().contains(&offset) => {
-                Some(("rules".to_string(), "expected a table"))
-            }
+            // A `rules` or `session` that is not a table is rejected in `parse` before
+            // this runs.
             _ => None,
         };
         if found.is_some() {
@@ -794,5 +795,69 @@ notify = true
         assert!(msg.contains("`session`: expected a table"), "{msg}");
         assert!(msg.contains("config.toml: line 1"), "{msg}");
         assert!(!msg.contains("hush"), "{msg}");
+    }
+
+    fn assert_rules_not_a_table(src: &str, position: &str) {
+        let msg = load_str(src).unwrap_err().to_string();
+        assert!(msg.contains("`rules`: expected a table"), "{src}: {msg}");
+        assert!(msg.contains(position), "{src}: {msg}");
+        assert!(!msg.contains("hush"), "{src}: {msg}");
+    }
+
+    #[test]
+    fn rules_array_is_error() {
+        let nine = format!("rules = [{}false]", "true, ".repeat(8));
+        let ten = format!("rules = [{}]", ["true"; 10].join(", "));
+        for src in [
+            "rules = [false]",
+            "rules = []",
+            "rules = [false, false]",
+            nine.as_str(),
+            ten.as_str(),
+            "rules = [false, \"hush\"]",
+            "rules = [[false]]",
+        ] {
+            assert_rules_not_a_table(src, "config.toml: line 1, column 9");
+        }
+    }
+
+    #[test]
+    fn rules_scalar_is_error() {
+        for src in ["rules = \"hush\"", "rules = true", "rules = 1"] {
+            assert_rules_not_a_table(src, "config.toml: line 1, column 9");
+        }
+    }
+
+    #[test]
+    fn rules_array_of_tables_is_error() {
+        assert_rules_not_a_table("[[rules]]\nterm = false", "config.toml: line 1");
+    }
+
+    #[test]
+    fn rules_error_position_is_the_value() {
+        let src = "allow = [\"*.example.com\"]\nterms = [\"Acme Corp\"]\nrules = [false]";
+        assert_rules_not_a_table(src, "line 3, column 9");
+    }
+
+    #[test]
+    fn rules_table_forms_parse() {
+        let term_off = RuleToggles {
+            term: false,
+            ..RuleToggles::default()
+        };
+        for src in [
+            "[rules]\nterm = false",
+            "rules = { term = false }",
+            "rules.term = false",
+        ] {
+            assert_eq!(load_str(src).unwrap().rules, term_off, "{src}");
+        }
+        for src in ["[rules]", "rules = {}"] {
+            assert_eq!(
+                load_str(src).unwrap().rules,
+                RuleToggles::default(),
+                "{src}"
+            );
+        }
     }
 }

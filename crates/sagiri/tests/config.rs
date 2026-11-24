@@ -131,6 +131,25 @@ fn unknown_key_exits_1_with_empty_stdout() {
 }
 
 #[test]
+fn rules_array_exits_1() {
+    let dir = TempDir::new().unwrap();
+    let cfg = dir.path().join("c.toml");
+    fs::write(&cfg, "terms = [\"Acme Corp\"]\nrules = [false]\n").unwrap();
+    let o = sagiri(dir.path())
+        .arg("--config")
+        .arg(&cfg)
+        .write_stdin("about Acme Corp\n")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert!(o.stdout.is_empty());
+    let stderr = String::from_utf8(o.stderr).unwrap();
+    assert!(stderr.contains("`rules`"), "{stderr}");
+    assert!(!stderr.contains("Acme"), "{stderr}");
+}
+
+#[test]
 fn rule_toggles_apply() {
     let dir = TempDir::new().unwrap();
     let cfg = dir.path().join("c.toml");
