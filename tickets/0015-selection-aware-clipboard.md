@@ -1,7 +1,7 @@
 ---
 id: "0015"
 title: Selection-aware clipboard
-status: todo
+status: done
 depends_on: ["0014"]
 ---
 
