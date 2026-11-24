@@ -70,7 +70,9 @@ Order of the tickets from 0014 on:
 - 0020 needs 0018 and 0019.
 - After 0020, the tickets 0021, 0022, 0024 and 0027 are independent.
 - 0023, 0025 and 0026 run one after another: all three build on `session/x11.rs`.
-- 0029 comes last.
+- 0029 comes last of the tickets 0014 to 0029.
+- 0030 needs only 0018 and is independent of every other ticket. It may run at any point
+  after 0018.
 - Milestones: the pure CLI is complete after 0017. Session mode works with a window-manager
   binding after 0021 and with its own hotkey after 0023.
 - Expected trivial merge conflicts: module lines in `crates/sagiri/src/lib.rs`,
