@@ -12,6 +12,7 @@ use crate::filter;
 /// Where the input comes from.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
 pub enum Source {
+    /// Standard input, read to its end.
     Stdin,
     /// The regular clipboard.
     Clipboard,
@@ -234,6 +235,8 @@ mod tests {
         assert!(!msg.contains("SECRET"));
         assert!(out.is_empty());
 
+        // A regression guard only: the fake's error is a fixed string, so this part fails
+        // only if `read_input` itself starts to put selection content into its message.
         let fake = FakeSelections::default();
         fake.set(
             Selection::Clipboard,
