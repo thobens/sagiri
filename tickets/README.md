@@ -56,6 +56,7 @@ Read this file before starting any ticket. It holds everything the tickets share
 | [0027](0027-makefile.md) | Makefile | 0016, 0020 |
 | [0028](0028-license.md) | License | – |
 | [0029](0029-pkgbuild.md) | PKGBUILD | 0027, 0028 |
+| [0030](0030-rules-not-a-table.md) | Reject a `rules` value that is not a table | 0018 |
 
 Order of the MVP tickets: 0001 → 0002 → 0003 are strictly sequential. After 0003, the
 tickets 0004, 0008 and 0009 are independent of each other. After 0004, the tickets 0005 and
