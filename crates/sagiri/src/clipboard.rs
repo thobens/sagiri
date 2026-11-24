@@ -50,7 +50,8 @@ pub trait SelectionClipboard {
 }
 
 /// The result of asking a selection for one kind of content.
-#[derive(Debug, PartialEq, Eq)]
+///
+/// No `Debug` on purpose: `Probe<String>` holds clipboard text.
 pub enum Probe<T> {
     Found(T),
     /// The selection does not offer this kind of content.
@@ -393,8 +394,23 @@ mod tests {
 
     #[test]
     fn classify_files_win_over_text() {
-        let c = classify(Probe::Found(2), text("/home/alice/report.txt")).unwrap();
-        assert_eq!(c, Content::Files);
+        let cases = [
+            text("/home/alice/report.txt"),
+            text(""),
+            Probe::Absent,
+            Probe::Failed,
+        ];
+        for t in cases {
+            assert_eq!(classify(Probe::Found(2), t).unwrap(), Content::Files);
+        }
+        assert_eq!(
+            classify(Probe::Found(1), Probe::Failed).unwrap(),
+            Content::Files
+        );
+        assert_eq!(
+            classify(Probe::Found(1), Probe::Absent).unwrap(),
+            Content::Files
+        );
     }
 
     #[test]
