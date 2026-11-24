@@ -180,9 +180,8 @@ fn help_and_version() {
 #[test]
 fn clipboard_without_display_exits_1() {
     let dir = TempDir::new().unwrap();
+    // `command()` removes `DISPLAY` and `WAYLAND_DISPLAY`, so opening the clipboard fails.
     let out = sagiri_cli(dir.path())
-        .env_remove("DISPLAY")
-        .env_remove("WAYLAND_DISPLAY")
         .arg("--key-file")
         .arg(dir.path().join("key"))
         .args(["--in", "clipboard"])

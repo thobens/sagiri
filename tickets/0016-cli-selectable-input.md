@@ -65,7 +65,7 @@ Messages go to stderr with the prefix `sagiri-cli: `.
 | input is not valid UTF-8 | `input is not valid UTF-8` | 1 |
 | selection holds files | `the clipboard holds files, not text` (or `the primary selection holds …`) | 1 |
 | selection holds no text | `the clipboard holds no text` (or `the primary selection holds no text`) | 1 |
-| clipboard cannot be opened or read | `cannot read the clipboard: <error from the clipboard crate>` | 1 |
+| clipboard cannot be opened or read | `cannot read the clipboard: <error from the clipboard crate>` (or `cannot read the primary selection: …`) | 1 |
 | key or config error | as in `sagiri` | 1 |
 
 On an error nothing is written to stdout.
