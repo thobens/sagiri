@@ -154,7 +154,7 @@ impl Session {
     }
 
     /// Ends the session because the display connection is gone. Only `BackendLost` is
-    /// sent, no `Stopped`.
+    /// sent, no `Stopped`, and it is sent whether or not the session was active.
     fn backend_lost(&mut self) {
         self.active = false;
         self.notifier.notify(Notice::BackendLost);
@@ -369,7 +369,6 @@ mod tests {
         s.set_active(true);
         assert!(s.is_active());
         assert_eq!(sel.get(Clip), text(&obfuscated(SAMPLE)));
-        assert_eq!(notes.notices().first(), Some(&Notice::Started));
         assert_eq!(notes.notices(), [Notice::Started]);
         assert_eq!(counters(&sel, Primary), (0, 0, 0));
     }
@@ -571,6 +570,18 @@ mod tests {
         assert_eq!(run_loop(&mut s, &rx), Exit::BackendLost);
         assert!(!s.is_active());
         assert_eq!(notes.notices(), [Notice::Started, Notice::BackendLost]);
+        drop(tx);
+    }
+
+    #[test]
+    fn backend_lost_notifies_an_inactive_session_too() {
+        let (mut s, sel, notes) = session();
+        let (tx, rx) = mpsc::channel();
+        tx.send(Event::BackendLost).unwrap();
+        assert_eq!(run_loop(&mut s, &rx), Exit::BackendLost);
+        assert!(!s.is_active());
+        assert_eq!(notes.notices(), [Notice::BackendLost]);
+        assert_eq!(counters(&sel, Clip), (0, 0, 0));
         drop(tx);
     }
 
