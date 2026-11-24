@@ -12,7 +12,7 @@ pub trait Clipboard {
 }
 
 /// Which selection an operation acts on.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
 pub enum Selection {
     /// The regular clipboard (copy and paste).
     Clipboard,
@@ -110,6 +110,17 @@ impl SystemClipboard {
     }
 }
 
+impl SystemClipboard {
+    /// Sets the selection to `text` and, on Linux, blocks until another program takes the
+    /// selection over. A selection this process already owns counts as not taken over.
+    /// Elsewhere it returns at once, like `write_text`.
+    pub fn write_text_and_wait(&mut self, selection: Selection, text: &str) -> anyhow::Result<()> {
+        platform::check(selection)?;
+        let cb = self.open()?;
+        Ok(platform::set_text_and_wait(cb, selection, text)?)
+    }
+}
+
 impl Clipboard for SystemClipboard {
     fn get_text(&mut self) -> anyhow::Result<String> {
         Ok(self.open()?.get_text()?)
@@ -177,6 +188,14 @@ mod platform {
         cb.set().clipboard(kind(selection)).text(text)
     }
 
+    pub fn set_text_and_wait(
+        cb: &mut Clipboard,
+        selection: Selection,
+        text: &str,
+    ) -> Result<(), Error> {
+        cb.set().clipboard(kind(selection)).wait().text(text)
+    }
+
     pub fn clear(cb: &mut Clipboard, selection: Selection) -> Result<(), Error> {
         cb.clear_with().clipboard(kind(selection))
     }
@@ -211,6 +230,14 @@ mod platform {
     }
 
     pub fn set_text(cb: &mut Clipboard, _selection: Selection, text: &str) -> Result<(), Error> {
+        cb.set().text(text)
+    }
+
+    pub fn set_text_and_wait(
+        cb: &mut Clipboard,
+        _selection: Selection,
+        text: &str,
+    ) -> Result<(), Error> {
         cb.set().text(text)
     }
 

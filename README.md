@@ -49,29 +49,39 @@ name inside a URL is still replaced.
 ### `sagiri-cli`
 
 `sagiri-cli` never opens a UI. It reads text from the selected input, obfuscates it and
-writes it to stdout, with the same replacements as `sagiri`.
+writes it to the selected output, with the same replacements as `sagiri`.
 
 ```
-sagiri-cli [-i, --in <stdin|clipboard|primary>] [-n, --trim-newline]
-           [--key-file <PATH>] [--config <PATH>]
+sagiri-cli [-i, --in <stdin|clipboard|primary>] [-o, --out <stdout|clipboard|primary>]
+           [-n, --trim-newline] [--key-file <PATH>] [--config <PATH>]
 ```
 
 ```
 sagiri-cli < input.txt
 sagiri-cli --in clipboard
+some-command | sagiri-cli -n --out clipboard
+sagiri-cli --in clipboard --out clipboard
 ```
+
+The last example obfuscates the clipboard in place.
 
 - `--in stdin` (the default) reads stdin to its end. Without `--in`, a terminal on stdin is
   refused instead of waiting for input.
-- `--in clipboard` reads the clipboard, `--in primary` the primary selection (Linux). The
-  selection is only read, never changed.
-- `-n` removes one trailing line break (`\n` or `\r\n`) from the output.
+- `--in clipboard` reads the clipboard, `--in primary` the primary selection (Linux).
+- `--out stdout` (the default) writes to stdout. `--out clipboard` and `--out primary` set
+  the selection instead; nothing is written to stdout then.
+- `-n` removes one trailing line break (`\n` or `\r\n`) from the output, for every output.
 - `--key-file` and `--config` work as for `sagiri`.
 
+On Linux a selection is served by the process that set it. With `--out clipboard` or
+`--out primary`, `sagiri-cli` therefore leaves a small background process (`sagiri-cli
+--hold …`) that holds the content until the next copy replaces it, and then exits. The text
+reaches that process through a pipe, never as an argument or environment variable.
+
 Exit codes: 0 success; 1 runtime error (input that is not valid UTF-8, a selection that
-holds files or no text, a clipboard that cannot be read, a key or config error); 2 usage
-error (an invalid flag, or no `--in` with a terminal on stdin). On an error nothing is
-written to stdout.
+holds files or no text, a clipboard that cannot be read or written, a key or config error);
+2 usage error (an invalid flag, or no `--in` with a terminal on stdin). On an error nothing
+is written to stdout.
 
 ## Configuration
 

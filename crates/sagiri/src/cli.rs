@@ -1,4 +1,5 @@
-//! `sagiri-cli`: obfuscates text from a selectable input and writes it to stdout.
+//! `sagiri-cli`: obfuscates text from a selectable input and writes it to a selectable
+//! output.
 
 use std::fmt;
 use std::io::{Read, Write};
@@ -18,6 +19,39 @@ pub enum Source {
     Clipboard,
     /// The PRIMARY selection.
     Primary,
+}
+
+/// Where the output goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, clap::ValueEnum)]
+pub enum Sink {
+    /// Standard output.
+    #[default]
+    Stdout,
+    /// The regular clipboard.
+    Clipboard,
+    /// The PRIMARY selection.
+    Primary,
+}
+
+/// Writes text to a selection. The binary passes the holder or a direct write.
+pub type SelectionWriter<'a> = dyn FnMut(Selection, &str) -> anyhow::Result<()> + 'a;
+
+/// Writes `text` to `selection` directly, for platforms where the system keeps the content.
+pub fn write_direct(
+    selections: &mut dyn SelectionClipboard,
+    selection: Selection,
+    text: &str,
+) -> anyhow::Result<()> {
+    selections
+        .write_text(selection, text)
+        .with_context(|| format!("cannot write {}", selection_name(selection)))
+}
+
+fn selection_name(selection: Selection) -> &'static str {
+    match selection {
+        Selection::Clipboard => "the clipboard",
+        Selection::Primary => "the primary selection",
+    }
 }
 
 /// No input was selected and stdin is a terminal.
@@ -48,11 +82,12 @@ pub fn read_input(
     stdin: impl Read,
     selections: &mut dyn SelectionClipboard,
 ) -> anyhow::Result<String> {
-    let (selection, name) = match source {
+    let selection = match source {
         Source::Stdin => return filter::read_text(stdin),
-        Source::Clipboard => (Selection::Clipboard, "the clipboard"),
-        Source::Primary => (Selection::Primary, "the primary selection"),
+        Source::Clipboard => Selection::Clipboard,
+        Source::Primary => Selection::Primary,
     };
+    let name = selection_name(selection);
     match selections
         .read(selection)
         .with_context(|| format!("cannot read {name}"))?
@@ -70,20 +105,38 @@ pub fn trim_newline(text: &str) -> &str {
         .unwrap_or(text)
 }
 
-/// Reads the input, obfuscates it and writes the result to `output`. On an error nothing
-/// is written. A broken pipe on `output` is not an error.
+/// What a run reads, where it writes and whether it trims the output.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Options {
+    pub source: Source,
+    pub sink: Sink,
+    /// Remove one trailing line break from the output (`-n`).
+    pub trim: bool,
+}
+
+/// Reads the input, obfuscates it and writes the result to the sink: `output` for stdout,
+/// `write_selection` for a selection, in which case nothing goes to `output`. On an error
+/// nothing is written. A broken pipe on `output` is not an error.
 pub fn run(
     engine: &Engine,
-    source: Source,
-    trim: bool,
+    options: Options,
     stdin: impl Read,
     selections: &mut dyn SelectionClipboard,
+    write_selection: &mut SelectionWriter<'_>,
     output: impl Write,
 ) -> anyhow::Result<()> {
-    let input = read_input(source, stdin, selections)?;
+    let input = read_input(options.source, stdin, selections)?;
     let result = engine.obfuscate(&input);
-    let text = if trim { trim_newline(&result) } else { &result };
-    filter::write_text(output, text)
+    let text = if options.trim {
+        trim_newline(&result)
+    } else {
+        &result
+    };
+    match options.sink {
+        Sink::Stdout => filter::write_text(output, text),
+        Sink::Clipboard => write_selection(Selection::Clipboard, text),
+        Sink::Primary => write_selection(Selection::Primary, text),
+    }
 }
 
 #[cfg(test)]
@@ -107,10 +160,37 @@ mod tests {
         stdin: &[u8],
         fake: &FakeSelections,
     ) -> (anyhow::Result<()>, Vec<u8>) {
-        let mut out = Vec::new();
-        let mut handle = fake.clone();
-        let r = run(&engine(), source, trim, stdin, &mut handle, &mut out);
+        let (r, out, written) = run_to(source, Sink::default(), trim, stdin, fake);
+        assert!(written.is_empty(), "the selection writer was called");
         (r, out)
+    }
+
+    /// Runs against `fake` with `sink`. The selection writer records each call and then
+    /// writes to `fake`. Returns the result, what went to stdout and the recorded writes.
+    fn run_to(
+        source: Source,
+        sink: Sink,
+        trim: bool,
+        stdin: &[u8],
+        fake: &FakeSelections,
+    ) -> (anyhow::Result<()>, Vec<u8>, Vec<(Selection, String)>) {
+        let mut out = Vec::new();
+        let mut written = Vec::new();
+        let mut target = fake.clone();
+        let mut writer = |selection: Selection, text: &str| {
+            written.push((selection, text.to_string()));
+            write_direct(&mut target, selection, text)
+        };
+        let options = Options { source, sink, trim };
+        let r = run(
+            &engine(),
+            options,
+            stdin,
+            &mut fake.clone(),
+            &mut writer,
+            &mut out,
+        );
+        (r, out, written)
     }
 
     fn error_message(r: anyhow::Result<()>) -> String {
@@ -285,5 +365,109 @@ mod tests {
             assert_eq!(fake.clears(selection), 0);
         }
         assert_eq!(fake.get(Selection::Clipboard), Content::Text(TEXT.into()));
+    }
+
+    #[test]
+    fn out_stdout_is_default() {
+        assert_eq!(Sink::default(), Sink::Stdout);
+        let fake = FakeSelections::default();
+        let (r, out, written) = run_to(
+            Source::Stdin,
+            Sink::default(),
+            false,
+            TEXT.as_bytes(),
+            &fake,
+        );
+        r.unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), engine().obfuscate(TEXT));
+        assert!(written.is_empty());
+        for selection in [Selection::Clipboard, Selection::Primary] {
+            assert_eq!(fake.writes(selection), 0);
+        }
+    }
+
+    #[test]
+    fn out_selection_writes_obfuscated_text() {
+        for (sink, selection, other) in [
+            (Sink::Clipboard, Selection::Clipboard, Selection::Primary),
+            (Sink::Primary, Selection::Primary, Selection::Clipboard),
+        ] {
+            let fake = FakeSelections::default();
+            let (r, out, written) = run_to(Source::Stdin, sink, false, TEXT.as_bytes(), &fake);
+            r.unwrap();
+            let expected = engine().obfuscate(TEXT);
+            assert_eq!(written, vec![(selection, expected.clone())]);
+            assert!(out.is_empty());
+            assert_eq!(fake.get(selection), Content::Text(expected));
+            assert_eq!(fake.writes(other), 0);
+        }
+    }
+
+    #[test]
+    fn clipboard_to_clipboard_replaces_in_place() {
+        let fake = FakeSelections::default();
+        fake.set(Selection::Clipboard, Content::Text(TEXT.into()));
+        let (r, out, written) = run_to(Source::Clipboard, Sink::Clipboard, false, b"", &fake);
+        r.unwrap();
+        let expected = engine().obfuscate(TEXT);
+        assert_ne!(expected, TEXT);
+        assert_eq!(written, vec![(Selection::Clipboard, expected.clone())]);
+        assert!(out.is_empty());
+        assert_eq!(fake.get(Selection::Clipboard), Content::Text(expected));
+        assert_eq!(fake.reads(Selection::Clipboard), 1);
+        assert_eq!(fake.writes(Selection::Clipboard), 1);
+        assert_eq!(fake.reads(Selection::Primary), 0);
+        assert_eq!(fake.writes(Selection::Primary), 0);
+    }
+
+    #[test]
+    fn trim_newline_applies_to_selection_output() {
+        for (input, trim, expected_input) in [
+            (format!("{TEXT}\n"), true, TEXT.to_string()),
+            (format!("{TEXT}\r\n"), true, TEXT.to_string()),
+            (format!("{TEXT}\n\n"), true, format!("{TEXT}\n")),
+            (format!("{TEXT}\n"), false, format!("{TEXT}\n")),
+        ] {
+            let fake = FakeSelections::default();
+            let (r, out, written) =
+                run_to(Source::Stdin, Sink::Primary, trim, input.as_bytes(), &fake);
+            r.unwrap();
+            assert!(out.is_empty());
+            let expected = engine().obfuscate(&expected_input);
+            assert_eq!(written, vec![(Selection::Primary, expected)]);
+        }
+    }
+
+    #[test]
+    fn selection_write_errors_name_the_selection_only() {
+        for (sink, selection, prefix) in [
+            (
+                Sink::Clipboard,
+                Selection::Clipboard,
+                "cannot write the clipboard: ",
+            ),
+            (
+                Sink::Primary,
+                Selection::Primary,
+                "cannot write the primary selection: ",
+            ),
+        ] {
+            let fake = FakeSelections::default();
+            fake.fail_write(selection, true);
+            let (r, out, _) = run_to(Source::Stdin, sink, false, TEXT.as_bytes(), &fake);
+            let msg = error_message(r);
+            assert!(msg.starts_with(prefix), "{msg}");
+            assert!(!msg.contains("172.55.0.1"), "{msg}");
+            assert!(out.is_empty());
+        }
+    }
+
+    #[test]
+    fn input_error_writes_no_selection() {
+        let fake = FakeSelections::default();
+        let (r, out, written) = run_to(Source::Clipboard, Sink::Clipboard, false, b"", &fake);
+        assert_eq!(error_message(r), "the clipboard holds no text");
+        assert!(out.is_empty());
+        assert!(written.is_empty());
     }
 }

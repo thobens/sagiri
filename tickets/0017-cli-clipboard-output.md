@@ -1,7 +1,7 @@
 ---
 id: "0017"
 title: "sagiri-cli: clipboard output"
-status: todo
+status: done
 depends_on: ["0016"]
 ---
 

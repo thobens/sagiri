@@ -166,6 +166,7 @@ fn help_and_version() {
         .assert()
         .success()
         .stdout(contains("--in"))
+        .stdout(contains("--out"))
         .stdout(contains("--trim-newline"))
         .stdout(contains("--key-file"))
         .stdout(contains("--config"));
@@ -196,4 +197,94 @@ fn clipboard_without_display_exits_1() {
         stderr.starts_with("sagiri-cli: cannot read the clipboard"),
         "{stderr}"
     );
+}
+
+#[test]
+fn hold_flag_is_hidden_from_help() {
+    let dir = TempDir::new().unwrap();
+    let out = sagiri_cli(dir.path())
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let help = String::from_utf8(out.stdout).unwrap();
+    assert!(help.contains("--out"), "{help}");
+    assert!(!help.contains("hold"), "{help}");
+}
+
+#[test]
+fn invalid_out_value_exits_2() {
+    let dir = TempDir::new().unwrap();
+    let out = sagiri_cli(dir.path())
+        .args(["--out", "printer"])
+        .write_stdin("server 172.55.0.1 is down\n")
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    assert!(out.stdout.is_empty());
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("--out"), "{stderr}");
+    assert!(!stderr.contains("172.55.0.1"), "{stderr}");
+    assert!(!dir.path().join("data/sagiri/key").exists());
+}
+
+/// The ids of the processes of this user whose environment has `HOME=<home>`. Every
+/// process a test starts through `command()` has that, its children too.
+#[cfg(target_os = "linux")]
+fn processes_with_home(home: &Path) -> Vec<String> {
+    let needle = format!("HOME={}", home.display());
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(environ) = std::fs::read(entry.path().join("environ")) else {
+            continue;
+        };
+        if environ.split(|&b| b == 0).any(|v| v == needle.as_bytes()) {
+            found.push(name);
+        }
+    }
+    found
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn out_clipboard_without_display_exits_1() {
+    use std::time::{Duration, Instant};
+
+    for sink in ["clipboard", "primary"] {
+        let dir = TempDir::new().unwrap();
+        // `command()` removes `DISPLAY` and `WAYLAND_DISPLAY`, so the holder cannot take
+        // the selection and never confirms.
+        let out = sagiri_cli(dir.path())
+            .arg("--key-file")
+            .arg(dir.path().join("key"))
+            .args(["--out", sink])
+            .write_stdin("server 172.55.0.1 is down\n")
+            .assert()
+            .code(1)
+            .get_output()
+            .clone();
+        assert!(out.stdout.is_empty());
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(stderr, "sagiri-cli: the clipboard could not be set\n");
+
+        // The holder has closed its stdout by now; give it a moment to be reaped.
+        let start = Instant::now();
+        loop {
+            let left = processes_with_home(dir.path());
+            if left.is_empty() {
+                break;
+            }
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "processes left: {left:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
