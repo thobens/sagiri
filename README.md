@@ -140,6 +140,18 @@ Rules and limits:
 - Linux with X11 only. Under Wayland, on macOS, or without `DISPLAY`, `run` exits with
   status 1 and names the reason.
 
+On X11 a middle click pastes the PRIMARY selection, which is the text currently selected
+with the mouse, not the clipboard. During a session a middle click therefore still pastes
+the original. With `primary = "mirror"` in `[session]`, every text that the session writes
+to the clipboard is written to PRIMARY as well, so after a copy both the paste shortcut and
+a middle click give the obfuscated text. If PRIMARY cannot be written, the clipboard keeps
+its obfuscated text and a notification says that a middle click may paste something else.
+Two limits remain:
+
+- Text that is selected but not copied is still pasted unchanged by a middle click.
+- After a copy, the application that the text was copied from loses its visible selection,
+  because PRIMARY now belongs to Sagiri.
+
 The session process shows a desktop notification when the session starts or stops, when a
 selection cannot be replaced, and when the connection to the display is lost. Notifications
 are shown through `notify-send` (package `libnotify` on Arch Linux). If `notify-send` is
@@ -209,6 +221,12 @@ notify = true
     way.
 - `primary` (default: `"off"`) sets how the PRIMARY selection is treated: `"off"`,
   `"mirror"` or `"watch"`.
+  - `"off"` leaves PRIMARY alone; a middle click after a copy pastes the original selection.
+  - `"mirror"` writes every text that the session puts on the clipboard to PRIMARY too, so
+    that a middle click after a copy pastes the obfuscated text. Text that is selected but
+    not copied is still pasted unchanged by a middle click. After a copy, the application
+    that the text was copied from loses its visible selection, because PRIMARY now belongs
+    to Sagiri.
 - `notify` (default: `true`) switches desktop notifications on or off.
 
 Warning: the config file contains the sensitive terms in plain text. Do not share it and do

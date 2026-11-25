@@ -7,6 +7,7 @@
 
 use std::sync::mpsc::{Receiver, Sender};
 
+use sagiri_core::config::PrimaryMode;
 use sagiri_core::engine::Engine;
 
 use super::notify::{Notice, Notifier};
@@ -84,6 +85,7 @@ pub struct Session {
     clipboard: Box<dyn SelectionClipboard>,
     notifier: Box<dyn Notifier>,
     active: bool,
+    primary: PrimaryMode,
     last_written: LastWritten,
 }
 
@@ -99,8 +101,17 @@ impl Session {
             clipboard,
             notifier,
             active: false,
+            primary: PrimaryMode::Off,
             last_written: LastWritten::default(),
         }
+    }
+
+    /// Sets how PRIMARY is treated. The default is `PrimaryMode::Off`. With
+    /// `PrimaryMode::Mirror`, every text written to the clipboard is written to PRIMARY
+    /// as well.
+    pub fn with_primary(mut self, mode: PrimaryMode) -> Self {
+        self.primary = mode;
+        self
     }
 
     pub fn is_active(&self) -> bool {
@@ -139,8 +150,21 @@ impl Session {
         if self.clipboard.write_text(selection, &out).is_err() {
             return self.fail(selection);
         }
+        if selection == Selection::Clipboard && self.primary == PrimaryMode::Mirror {
+            self.mirror(&out);
+        }
         *self.last_written.slot(selection) = Some(out);
         Outcome::Replaced
+    }
+
+    /// Writes the clipboard's new text to PRIMARY too. A failure is reported but does not
+    /// undo the clipboard replacement, which is already correct.
+    fn mirror(&mut self, out: &str) {
+        if self.clipboard.write_text(Selection::Primary, out).is_ok() {
+            self.last_written.primary = Some(out.to_string());
+        } else {
+            self.notifier.notify(Notice::PrimaryNotUpdated);
+        }
     }
 
     /// Fails closed: clears the selection and tells the user.
@@ -448,6 +472,137 @@ mod tests {
         sel.fail_write(Clip, false);
         sel.set(Clip, text(&out));
         assert_eq!(s.on_change(Clip), Outcome::Replaced);
+    }
+
+    fn session_with(mode: PrimaryMode) -> (Session, FakeSelections, FakeNotifier) {
+        let (s, sel, notes) = session();
+        (s.with_primary(mode), sel, notes)
+    }
+
+    /// Like `active`, with the given PRIMARY mode.
+    fn active_with(mode: PrimaryMode) -> (Session, FakeSelections, FakeNotifier) {
+        let (mut s, sel, notes) = session_with(mode);
+        s.set_active(true);
+        assert_eq!(notes.notices(), [Notice::Started]);
+        (s, sel, notes)
+    }
+
+    #[test]
+    fn mirror_writes_primary_after_replacement() {
+        let (mut s, sel, notes) = active_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        sel.set(Primary, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        let out = text(&obfuscated(SAMPLE));
+        assert_eq!(sel.get(Clip), out);
+        assert_eq!(sel.get(Primary), out);
+        assert_eq!(sel.writes(Primary), 1);
+        // The mirror never reads PRIMARY.
+        assert_eq!(sel.reads(Primary), 0);
+        assert_eq!(notes.notices(), [Notice::Started]);
+    }
+
+    #[test]
+    fn off_never_touches_primary() {
+        let (mut s, sel, _) = active();
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        assert_eq!(counters(&sel, Primary), (0, 0, 0));
+
+        let (mut s, sel, _) = active_with(PrimaryMode::Off);
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        assert_eq!(counters(&sel, Primary), (0, 0, 0));
+    }
+
+    #[test]
+    fn watch_mode_does_not_mirror() {
+        let (mut s, sel, notes) = active_with(PrimaryMode::Watch);
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        assert_eq!(sel.get(Clip), text(&obfuscated(SAMPLE)));
+        assert_eq!(counters(&sel, Primary), (0, 0, 0));
+        assert_eq!(notes.notices(), [Notice::Started]);
+    }
+
+    #[test]
+    fn mirror_skips_own_and_skipped_outcomes() {
+        let (mut s, sel, _) = active_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        assert_eq!(sel.writes(Primary), 1);
+        // A repeated event for the same clipboard content.
+        assert_eq!(s.on_change(Clip), Outcome::Own);
+        assert_eq!(sel.writes(Primary), 1);
+        // A file copy.
+        sel.set(Clip, Content::Files);
+        assert_eq!(s.on_change(Clip), Outcome::Skipped);
+        assert_eq!(sel.writes(Primary), 1);
+        assert_eq!(sel.get(Primary), text(&obfuscated(SAMPLE)));
+    }
+
+    #[test]
+    fn mirror_skips_failed_and_inactive_outcomes() {
+        let (mut s, sel, _) = active_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        sel.fail_write(Clip, true);
+        assert_eq!(s.on_change(Clip), Outcome::Failed);
+        assert_eq!(counters(&sel, Primary), (0, 0, 0));
+
+        let (mut s, sel, _) = session_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Inactive);
+        assert_eq!(counters(&sel, Primary), (0, 0, 0));
+    }
+
+    #[test]
+    fn mirror_failure_keeps_clipboard_replacement() {
+        let (mut s, sel, notes) = active_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        sel.set(Primary, text(SAMPLE));
+        sel.fail_write(Primary, true);
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        assert_eq!(sel.get(Clip), text(&obfuscated(SAMPLE)));
+        assert_eq!(sel.clears(Clip), 0);
+        assert_eq!(sel.clears(Primary), 0);
+        assert_eq!(
+            notes.notices(),
+            [Notice::Started, Notice::PrimaryNotUpdated]
+        );
+        // The clipboard write is still remembered as own.
+        assert_eq!(s.on_change(Clip), Outcome::Own);
+    }
+
+    #[test]
+    fn failed_mirror_is_not_remembered() {
+        let (mut s, sel, _) = active_with(PrimaryMode::Mirror);
+        let out = obfuscated(SAMPLE);
+        sel.set(Clip, text(SAMPLE));
+        sel.fail_write(Primary, true);
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        sel.fail_write(Primary, false);
+        sel.set(Primary, text(&out));
+        assert_eq!(s.on_change(Primary), Outcome::Replaced);
+    }
+
+    #[test]
+    fn mirrored_text_counts_as_own_write() {
+        let (mut s, sel, _) = active_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        assert_eq!(s.on_change(Primary), Outcome::Own);
+        assert_eq!(sel.writes(Primary), 1);
+    }
+
+    #[test]
+    fn activation_mirrors_too() {
+        let (mut s, sel, notes) = session_with(PrimaryMode::Mirror);
+        sel.set(Clip, text(SAMPLE));
+        s.set_active(true);
+        let out = text(&obfuscated(SAMPLE));
+        assert_eq!(sel.get(Clip), out);
+        assert_eq!(sel.get(Primary), out);
+        assert_eq!(notes.notices(), [Notice::Started]);
     }
 
     #[test]

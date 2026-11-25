@@ -1,7 +1,7 @@
 ---
 id: "0024"
 title: PRIMARY mirror
-status: todo
+status: done
 depends_on: ["0020"]
 ---
 

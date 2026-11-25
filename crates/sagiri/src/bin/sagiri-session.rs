@@ -111,7 +111,8 @@ fn run_daemon(socket: PathBuf, active: bool, opts: setup::Options) -> anyhow::Re
         loaded.engine,
         Box::new(SystemClipboard::new()),
         Box::new(Notifiers::for_session(&settings)),
-    );
+    )
+    .with_primary(settings.primary);
     let exit = daemon::run(Parts {
         session,
         socket,
