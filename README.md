@@ -321,11 +321,11 @@ on Linux and macOS.
 `scripts/x11-test.sh` runs the X11 integration tests of session mode on Linux. They start
 the real `sagiri-session` against a virtual X server and check clipboard replacement and the
 hotkey. The script needs `xvfb-run`, which comes with the X server's Xvfb package,
-`xdotool`, `xclip` and `xsel`; it exits 2 if one of them is missing. It unsets `WAYLAND_DISPLAY`, so it also
-works from a Wayland session. The tests refuse to run unless the script has set
-`SAGIRI_X11_TEST`, so that `cargo test -- --ignored` never takes over the real clipboard or
-keyboard. The script is not part of `scripts/check.sh` and does not run in CI, so it has to
-be run by hand.
+`xdotool`, `xclip` and `xsel`; it exits 2 if one of them is missing. It unsets
+`WAYLAND_DISPLAY`, so it also works from a Wayland session. The tests refuse to run unless
+the script has set `SAGIRI_X11_TEST`, so that `cargo test -- --ignored` never takes over the
+real clipboard or keyboard. The script is not part of `scripts/check.sh` and does not run in
+CI, so it has to be run by hand.
 
 ## More
 

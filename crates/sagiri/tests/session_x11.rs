@@ -73,6 +73,7 @@ struct Clipboard(arboard::Clipboard);
 
 impl Clipboard {
     fn new() -> Self {
+        require_x11_test();
         assert!(
             std::env::var_os("WAYLAND_DISPLAY").is_none(),
             "WAYLAND_DISPLAY is set; run scripts/x11-test.sh"
@@ -376,6 +377,127 @@ impl Drop for Owner {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+/// How `TextOwner` handles a `TARGETS` request.
+#[derive(Clone, Copy)]
+enum TargetsReply {
+    /// Answers with property `None`, as for a target it does not offer.
+    Refuse,
+    /// Sends no answer at all.
+    Ignore,
+}
+
+/// A clipboard owner that serves `text` as `UTF8_STRING`, refuses every other target
+/// and handles `TARGETS` as `reply` says. Returns once it owns the clipboard; its thread
+/// ends when another program takes the clipboard over, or after `DEADLINE`.
+fn text_owner(text: &'static str, reply: TargetsReply) -> thread::JoinHandle<()> {
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::Event;
+    use x11rb::protocol::xproto::{
+        ConnectionExt as _, CreateWindowAux, EventMask, PropMode, SELECTION_NOTIFY_EVENT,
+        SelectionNotifyEvent, WindowClass,
+    };
+    use x11rb::wrapper::ConnectionExt as _;
+
+    require_x11_test();
+    let (conn, screen) = x11rb::connect(None).expect("cannot connect to the X server");
+    let atom = |name: &[u8]| conn.intern_atom(false, name).unwrap().reply().unwrap().atom;
+    let (clipboard, utf8, targets) = (atom(b"CLIPBOARD"), atom(b"UTF8_STRING"), atom(b"TARGETS"));
+    let window = conn.generate_id().unwrap();
+    let root = conn.setup().roots[screen].root;
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        0,
+        0,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new(),
+    )
+    .unwrap();
+    conn.set_selection_owner(window, clipboard, x11rb::CURRENT_TIME)
+        .unwrap();
+    let owner = conn
+        .get_selection_owner(clipboard)
+        .unwrap()
+        .reply()
+        .unwrap();
+    assert_eq!(owner.owner, window, "cannot take the clipboard");
+
+    thread::spawn(move || {
+        let deadline = Instant::now() + DEADLINE;
+        while Instant::now() < deadline {
+            let event = match conn.poll_for_event().unwrap() {
+                Some(event) => event,
+                None => {
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+            };
+            let request = match event {
+                Event::SelectionRequest(request) => request,
+                Event::SelectionClear(_) => return,
+                _ => continue,
+            };
+            let property = if request.target == utf8 {
+                conn.change_property8(
+                    PropMode::REPLACE,
+                    request.requestor,
+                    request.property,
+                    utf8,
+                    text.as_bytes(),
+                )
+                .unwrap();
+                request.property
+            } else if request.target == targets && matches!(reply, TargetsReply::Ignore) {
+                continue;
+            } else {
+                x11rb::NONE
+            };
+            let notify = SelectionNotifyEvent {
+                response_type: SELECTION_NOTIFY_EVENT,
+                sequence: 0,
+                time: request.time,
+                requestor: request.requestor,
+                selection: request.selection,
+                target: request.target,
+                property,
+            };
+            conn.send_event(false, request.requestor, EventMask::NO_EVENT, notify)
+                .unwrap();
+            conn.flush().unwrap();
+        }
+    })
+}
+
+/// An owner that refuses `TARGETS` counts as offering text: its text is replaced.
+#[test]
+#[ignore = "needs an X server; run scripts/x11-test.sh"]
+fn x11_replaces_text_from_owner_refusing_targets() {
+    let session = Session::start("");
+    assert_eq!(session.send("start"), "active");
+    let owner = text_owner(SAMPLE, TargetsReply::Refuse);
+    let replaced = Clipboard::new().replaced(SAMPLE);
+    assert!(!replaced.contains(SAMPLE_IP));
+    owner.join().unwrap();
+}
+
+/// An owner that never answers `TARGETS` counts as offering text: its text is replaced
+/// once the query has timed out.
+#[test]
+#[ignore = "needs an X server; run scripts/x11-test.sh"]
+fn x11_replaces_text_from_owner_ignoring_targets() {
+    let session = Session::start("");
+    assert_eq!(session.send("start"), "active");
+    let owner = text_owner(SAMPLE, TargetsReply::Ignore);
+    let replaced = Clipboard::new().replaced(SAMPLE);
+    assert!(!replaced.contains(SAMPLE_IP));
+    owner.join().unwrap();
 }
 
 /// `xclip -t image/png` answers a text request with the PNG; the session must still treat
