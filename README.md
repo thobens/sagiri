@@ -299,3 +299,10 @@ be run by hand.
 
 - `PLAN.md`: how the MVP is planned.
 - `tickets/README.md`: shared rules, architecture and the ticket index.
+
+## License
+
+Sagiri is licensed under either of the following, at the user's choice:
+
+- Apache License, Version 2.0 (`LICENSE-APACHE`)
+- MIT license (`LICENSE-MIT`)

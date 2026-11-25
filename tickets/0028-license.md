@@ -1,7 +1,7 @@
 ---
 id: "0028"
 title: License
-status: todo
+status: done
 depends_on: []
 ---
 
