@@ -108,7 +108,7 @@ impl Session {
 
     /// Sets how PRIMARY is treated. The default is `PrimaryMode::Off`. With
     /// `PrimaryMode::Mirror`, every text written to the clipboard is written to PRIMARY
-    /// as well.
+    /// as well. With `PrimaryMode::Watch`, starting the session processes PRIMARY too.
     pub fn with_primary(mut self, mode: PrimaryMode) -> Self {
         self.primary = mode;
         self
@@ -118,8 +118,9 @@ impl Session {
         self.active
     }
 
-    /// Starts or stops the session. Starting also processes what the clipboard holds.
-    /// Setting the current state again does nothing.
+    /// Starts or stops the session. Starting also processes what the clipboard holds, and
+    /// with `PrimaryMode::Watch` what PRIMARY holds. Setting the current state again does
+    /// nothing.
     pub fn set_active(&mut self, active: bool) {
         if active == self.active {
             return;
@@ -128,6 +129,9 @@ impl Session {
         if active {
             self.notifier.notify(Notice::Started);
             self.on_change(Selection::Clipboard);
+            if self.primary == PrimaryMode::Watch {
+                self.on_change(Selection::Primary);
+            }
         } else {
             self.notifier.notify(Notice::Stopped);
         }
@@ -521,8 +525,72 @@ mod tests {
         sel.set(Clip, text(SAMPLE));
         assert_eq!(s.on_change(Clip), Outcome::Replaced);
         assert_eq!(sel.get(Clip), text(&obfuscated(SAMPLE)));
-        assert_eq!(counters(&sel, Primary), (0, 0, 0));
+        // The one read is the activation looking at PRIMARY, which held no text.
+        assert_eq!(counters(&sel, Primary), (1, 0, 0));
         assert_eq!(notes.notices(), [Notice::Started]);
+    }
+
+    #[test]
+    fn watch_replaces_primary_text() {
+        let (mut s, sel, notes) = active_with(PrimaryMode::Watch);
+        sel.set(Primary, text(SAMPLE));
+        assert_eq!(s.on_change(Primary), Outcome::Replaced);
+        assert_eq!(sel.get(Primary), text(&obfuscated(SAMPLE)));
+        assert_eq!(sel.writes(Primary), 1);
+        // Only PRIMARY is touched; nothing goes to the clipboard.
+        assert_eq!(sel.writes(Clip), 0);
+        assert_eq!(notes.notices(), [Notice::Started]);
+    }
+
+    #[test]
+    fn own_primary_write_is_not_reprocessed() {
+        let (mut s, sel, _) = active_with(PrimaryMode::Watch);
+        sel.set(Primary, text(SAMPLE));
+        assert_eq!(s.on_change(Primary), Outcome::Replaced);
+        // Sagiri's own write produces a notification of its own.
+        assert_eq!(s.on_change(Primary), Outcome::Own);
+        assert_eq!(sel.writes(Primary), 1);
+        assert_eq!(sel.get(Primary), text(&obfuscated(SAMPLE)));
+    }
+
+    #[test]
+    fn watch_activation_processes_both_selections() {
+        let (mut s, sel, notes) = session_with(PrimaryMode::Watch);
+        sel.set(Clip, text(SAMPLE));
+        sel.set(Primary, text("mail 192.0.2.7 now"));
+        s.set_active(true);
+        assert_eq!(sel.get(Clip), text(&obfuscated(SAMPLE)));
+        assert_eq!(sel.get(Primary), text(&obfuscated("mail 192.0.2.7 now")));
+        assert_eq!(counters(&sel, Clip), (1, 1, 0));
+        assert_eq!(counters(&sel, Primary), (1, 1, 0));
+        assert_eq!(notes.notices(), [Notice::Started]);
+
+        // Other modes leave PRIMARY alone on activation.
+        for mode in [PrimaryMode::Off, PrimaryMode::Mirror] {
+            let (mut s, sel, _) = session_with(mode);
+            sel.set(Primary, text(SAMPLE));
+            s.set_active(true);
+            assert_eq!(sel.reads(Primary), 0, "{mode:?}");
+            assert_eq!(sel.get(Primary), text(SAMPLE), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn watch_failure_clears_primary_only() {
+        let (mut s, sel, notes) = active_with(PrimaryMode::Watch);
+        sel.set(Clip, text(SAMPLE));
+        assert_eq!(s.on_change(Clip), Outcome::Replaced);
+        let clip = sel.get(Clip);
+        let clip_counters = counters(&sel, Clip);
+        sel.set(Primary, text(SAMPLE));
+        sel.fail_write(Primary, true);
+        assert_eq!(s.on_change(Primary), Outcome::Failed);
+        assert_eq!(sel.clears(Primary), 1);
+        assert_eq!(sel.get(Primary), Content::Other);
+        assert_eq!(counters(&sel, Clip), clip_counters);
+        assert_eq!(sel.clears(Clip), 0);
+        assert_eq!(sel.get(Clip), clip);
+        assert_eq!(notes.notices(), [Notice::Started, Notice::ClipboardCleared]);
     }
 
     #[test]

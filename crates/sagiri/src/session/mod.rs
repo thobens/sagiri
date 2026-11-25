@@ -7,5 +7,6 @@ pub mod core;
 pub mod daemon;
 pub mod hotkey;
 pub mod notify;
+pub mod settle;
 #[cfg(target_os = "linux")]
 pub mod x11;

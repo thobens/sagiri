@@ -1,7 +1,7 @@
 ---
 id: "0025"
 title: PRIMARY watch (experimental)
-status: todo
+status: done
 depends_on: ["0021", "0024"]
 ---
 

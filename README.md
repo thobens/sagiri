@@ -152,6 +152,25 @@ Two limits remain:
 - After a copy, the application that the text was copied from loses its visible selection,
   because PRIMARY now belongs to Sagiri.
 
+`primary = "watch"` is experimental. Its costs come first:
+
+- As soon as a selection is replaced, the application loses its visible selection: the
+  highlight disappears.
+- In terminals and other programs that copy "the current selection", a copy shortcut
+  pressed after that copies nothing. With watch mode, select and middle-click; do not
+  select and then copy.
+- Selections made with the keyboard may be replaced before they are complete.
+- The mode is experimental and may change or be removed.
+
+With `primary = "watch"` in `[session]`, the session replaces the selected text itself, so
+that selecting text with the mouse and middle-clicking somewhere else pastes the obfuscated
+text without a copy in between. The selection is replaced once it has stopped changing:
+150 ms after the last change while neither mouse button 1 nor Shift is held, and at the
+latest 30 s after the selection started, even during a drag. Starting a session also
+replaces what PRIMARY holds at that moment. In watch mode nothing is mirrored from the
+clipboard to PRIMARY. If PRIMARY cannot be written, it is cleared and the clipboard is left
+as it is.
+
 The session process shows a desktop notification when the session starts or stops, when a
 selection cannot be replaced, and when the connection to the display is lost. Notifications
 are shown through `notify-send` (package `libnotify` on Arch Linux). If `notify-send` is
@@ -227,6 +246,9 @@ notify = true
     not copied is still pasted unchanged by a middle click. After a copy, the application
     that the text was copied from loses its visible selection, because PRIMARY now belongs
     to Sagiri.
+  - `"watch"` (experimental) replaces selected text on PRIMARY itself, without a copy.
+    The selection loses its highlight and can no longer be copied afterwards; see
+    [Session mode](#session-mode) for all costs.
 - `notify` (default: `true`) switches desktop notifications on or off.
 
 Warning: the config file contains the sensitive terms in plain text. Do not share it and do

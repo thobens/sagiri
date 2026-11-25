@@ -3,30 +3,41 @@
 //! connection grabs it on the root window and the thread reports presses as
 //! `Event::Toggle`.
 //!
+//! With `primary = "watch"` the thread also watches `PRIMARY`. A new `PRIMARY` owner is
+//! reported only once the selection has settled (see `settle`); while one is pending, the
+//! thread polls every 50 ms instead of blocking.
+//!
 //! The watcher has its own connection and never reads or writes a selection.
 
 use std::sync::mpsc::Sender;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use sagiri_core::config::SessionConfig;
+use sagiri_core::config::{PrimaryMode, SessionConfig};
 use x11rb::connection::{Connection, RequestConnection};
 use x11rb::errors::ReplyError;
 use x11rb::protocol::xfixes::{self, ConnectionExt as _, SelectionEventMask};
-use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, GrabMode, ModMask, Window};
+use x11rb::protocol::xproto::{
+    AtomEnum, ConnectionExt as _, GrabMode, KeyButMask, ModMask, Window,
+};
 use x11rb::protocol::{ErrorKind, Event as XEvent};
 use x11rb::rust_connection::RustConnection;
 
 use super::core::Event;
 use super::hotkey::{self, AutoRepeat, Debounce, Hotkey};
+use super::settle::Settle;
 use crate::clipboard::Selection;
 
 /// The XFixes version this client speaks. Selection notifications need version 1.
 const XFIXES_VERSION: (u32, u32) = (5, 0);
 
-/// Connects to the X server, asks for owner-change notifications of `CLIPBOARD` and
-/// grabs the hotkey if one is set, and starts the watcher thread. Errors in these steps
-/// are returned before the thread runs.
+/// How often the thread looks at the pointer while a `PRIMARY` selection is pending.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Connects to the X server, asks for owner-change notifications of `CLIPBOARD` (and of
+/// `PRIMARY` with `primary = "watch"`), grabs the hotkey if one is set, and starts the
+/// watcher thread. Errors in these steps are returned before the thread runs.
 pub fn start(events: Sender<Event>, settings: &SessionConfig) -> anyhow::Result<()> {
     let (conn, screen) = RustConnection::connect(None).context("cannot connect to the X server")?;
     if conn
@@ -53,13 +64,34 @@ pub fn start(events: Sender<Event>, settings: &SessionConfig) -> anyhow::Result<
         .context("cannot watch the clipboard")?
         .check()
         .context("cannot watch the clipboard")?;
+    let watch_primary = settings.primary == PrimaryMode::Watch;
+    if watch_primary {
+        conn.xfixes_select_selection_input(root, primary, SelectionEventMask::SET_SELECTION_OWNER)
+            .context("cannot watch the primary selection")?
+            .check()
+            .context("cannot watch the primary selection")?;
+    }
     let grab = match hotkey::from_config(settings)? {
         Some(hotkey) => Some(grab(&conn, root, hotkey)?),
         None => None,
     };
     thread::Builder::new()
         .name("x11".into())
-        .spawn(move || watch(&conn, &events, clipboard, primary, grab))
+        .spawn(move || {
+            Watcher {
+                conn: &conn,
+                events: &events,
+                root,
+                clipboard,
+                primary,
+                watch_primary,
+                grab,
+                debounce: Debounce::new(),
+                repeat: AutoRepeat::new(),
+                settle: Settle::new(),
+            }
+            .run();
+        })
         .context("cannot start the X11 thread")?;
     Ok(())
 }
@@ -116,55 +148,121 @@ fn grab(conn: &RustConnection, root: Window, hotkey: Hotkey) -> anyhow::Result<G
     Ok(Grab { hotkey, keycodes })
 }
 
-/// Blocks on the connection and forwards clipboard owner changes and hotkey presses
-/// until the connection ends or nobody listens any more.
-fn watch(
-    conn: &RustConnection,
-    events: &Sender<Event>,
+/// The state of the watcher thread.
+struct Watcher<'a> {
+    conn: &'a RustConnection,
+    events: &'a Sender<Event>,
+    root: Window,
     clipboard: u32,
     primary: u32,
+    watch_primary: bool,
     grab: Option<Grab>,
-) {
-    let mut debounce = Debounce::new();
-    let mut repeat = AutoRepeat::new();
-    loop {
-        let event = match conn.wait_for_event() {
-            Ok(event) => event,
-            Err(_) => {
-                let _ = events.send(Event::BackendLost);
+    debounce: Debounce,
+    repeat: AutoRepeat,
+    settle: Settle,
+}
+
+/// Whether the watcher thread goes on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    Continue,
+    Stop,
+}
+
+impl Watcher<'_> {
+    /// Forwards clipboard owner changes, settled `PRIMARY` selections and hotkey presses
+    /// until the connection ends or nobody listens any more. Blocks on the connection
+    /// while no `PRIMARY` selection is pending.
+    fn run(mut self) {
+        loop {
+            let flow = if self.settle.is_pending() {
+                match self.conn.poll_for_event() {
+                    Ok(Some(event)) => self.handle(event),
+                    Ok(None) => self.tick(),
+                    Err(_) => self.lost(),
+                }
+            } else {
+                match self.conn.wait_for_event() {
+                    Ok(event) => self.handle(event),
+                    Err(_) => self.lost(),
+                }
+            };
+            if flow == Flow::Stop {
                 return;
             }
+        }
+    }
+
+    fn lost(&self) -> Flow {
+        let _ = self.events.send(Event::BackendLost);
+        Flow::Stop
+    }
+
+    fn send(&self, event: Event) -> Flow {
+        if self.events.send(event).is_ok() {
+            Flow::Continue
+        } else {
+            Flow::Stop
+        }
+    }
+
+    /// Runs when every event that has arrived is handled and a `PRIMARY` selection is
+    /// pending: asks for the pointer state, lets `Settle` decide, and waits for the next
+    /// round if the selection is still pending.
+    fn tick(&mut self) -> Flow {
+        let held = match self.conn.query_pointer(self.root) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(reply) => is_held(reply.mask),
+                // A pointer the server cannot report is not held.
+                Err(ReplyError::X11Error(_)) => false,
+                Err(ReplyError::ConnectionError(_)) => return self.lost(),
+            },
+            Err(_) => return self.lost(),
         };
+        if self.settle.poll(Instant::now(), held) {
+            return self.send(Event::Changed(Selection::Primary));
+        }
+        thread::sleep(POLL_INTERVAL);
+        Flow::Continue
+    }
+
+    fn handle(&mut self, event: XEvent) -> Flow {
         match event {
             XEvent::KeyRelease(release) => {
-                repeat.released(release.detail, release.time);
-                continue;
+                self.repeat.released(release.detail, release.time);
+                Flow::Continue
             }
             XEvent::KeyPress(press) => {
-                let pressed = grab.as_ref().is_some_and(|g| {
+                let pressed = self.grab.as_ref().is_some_and(|g| {
                     hotkey::matches(&g.hotkey, &g.keycodes, press.detail, press.state.into())
                 });
                 if pressed
-                    && !repeat.is_repeat(press.detail, press.time)
-                    && debounce.accept(press.time)
-                    && events.send(Event::Toggle).is_err()
+                    && !self.repeat.is_repeat(press.detail, press.time)
+                    && self.debounce.accept(press.time)
                 {
-                    return;
+                    self.send(Event::Toggle)
+                } else {
+                    Flow::Continue
                 }
-                continue;
             }
-            _ => {}
-        }
-        let XEvent::XfixesSelectionNotify(notify) = event else {
-            continue;
-        };
-        if selection_for(notify.selection, clipboard, primary) != Some(Selection::Clipboard) {
-            continue;
-        }
-        if events.send(Event::Changed(Selection::Clipboard)).is_err() {
-            return;
+            XEvent::XfixesSelectionNotify(notify) => {
+                match selection_for(notify.selection, self.clipboard, self.primary) {
+                    Some(Selection::Clipboard) => self.send(Event::Changed(Selection::Clipboard)),
+                    Some(Selection::Primary) if self.watch_primary => {
+                        self.settle.on_owner_change(Instant::now());
+                        Flow::Continue
+                    }
+                    _ => Flow::Continue,
+                }
+            }
+            _ => Flow::Continue,
         }
     }
+}
+
+/// Whether mouse button 1 or Shift is down in a pointer state mask.
+fn is_held(mask: KeyButMask) -> bool {
+    mask.intersects(KeyButMask::BUTTON1 | KeyButMask::SHIFT)
 }
 
 /// The selection an atom names, if it is one Sagiri knows.
@@ -199,5 +297,16 @@ mod tests {
             None
         );
         assert_eq!(selection_for(301, clipboard, primary), None);
+    }
+
+    #[test]
+    fn held_means_button_one_or_shift() {
+        assert!(!is_held(KeyButMask::from(0u16)));
+        assert!(is_held(KeyButMask::BUTTON1));
+        assert!(is_held(KeyButMask::SHIFT));
+        assert!(is_held(KeyButMask::BUTTON1 | KeyButMask::MOD2));
+        assert!(!is_held(
+            KeyButMask::BUTTON3 | KeyButMask::CONTROL | KeyButMask::LOCK
+        ));
     }
 }
