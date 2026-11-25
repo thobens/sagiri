@@ -13,7 +13,11 @@ else
 RELEASE_DIR := target/release
 endif
 
-BINDIR := $(DESTDIR)$(PREFIX)/bin
+# A leading `~` in PREFIX is expanded here, because shells such as zsh pass
+# `PREFIX=~/.local` through unexpanded and a non-empty DESTDIR would hide it from the
+# recipe shell.
+PREFIX_DIR := $(patsubst ~/%,$(HOME)/%,$(patsubst ~,$(HOME),$(PREFIX)))
+BINDIR     := $(DESTDIR)$(PREFIX_DIR)/bin
 
 .DEFAULT_GOAL := all
 
@@ -33,18 +37,18 @@ $(BINS):
 # Never builds: `sudo make install` must not leave root-owned files in the target directory.
 install:
 	@for bin in $(BINS); do \
-		if [ ! -x '$(RELEASE_DIR)'/"$$bin" ]; then \
+		if [ ! -x $(RELEASE_DIR)/$$bin ]; then \
 			echo "missing $(RELEASE_DIR)/$$bin: run 'make release' first" >&2; \
 			exit 1; \
 		fi; \
 	done
 	@for bin in $(BINS); do \
-		echo "install -Dm755 $(RELEASE_DIR)/$$bin $(BINDIR)/$$bin"; \
-		install -Dm755 '$(RELEASE_DIR)'/"$$bin" '$(BINDIR)'/"$$bin" || exit 1; \
+		echo install -Dm755 $(RELEASE_DIR)/$$bin $(BINDIR)/$$bin; \
+		install -Dm755 $(RELEASE_DIR)/$$bin $(BINDIR)/$$bin || exit 1; \
 	done
 
 uninstall:
-	rm -f $(addprefix '$(BINDIR)'/,$(BINS))
+	rm -f $(addprefix $(BINDIR)/,$(BINS))
 
 check:
 	scripts/check.sh
