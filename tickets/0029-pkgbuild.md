@@ -1,7 +1,7 @@
 ---
 id: "0029"
 title: PKGBUILD
-status: todo
+status: done
 depends_on: ["0027", "0028"]
 ---
 
