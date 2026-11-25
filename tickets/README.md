@@ -57,6 +57,8 @@ Read this file before starting any ticket. It holds everything the tickets share
 | [0028](0028-license.md) | License | – |
 | [0029](0029-pkgbuild.md) | PKGBUILD | 0027, 0028 |
 | [0030](0030-rules-not-a-table.md) | Reject a `rules` value that is not a table | 0018 |
+| [0031](0031-image-owner-answers-text-request.md) | Leave an image alone when its owner answers a text request with other data | 0021 |
+| [0032](0032-flaky-stale-socket-test.md) | Make `stale_socket_is_replaced` independent of tests that start processes | 0022 |
 
 Order of the MVP tickets: 0001 → 0002 → 0003 are strictly sequential. After 0003, the
 tickets 0004, 0008 and 0009 are independent of each other. After 0004, the tickets 0005 and
@@ -73,6 +75,9 @@ Order of the tickets from 0014 on:
 - 0029 comes last of the tickets 0014 to 0029.
 - 0030 needs only 0018 and is independent of every other ticket. It may run at any point
   after 0018.
+- 0031 and 0032 are bug tickets found while running 0021 and 0022. They are independent of
+  each other and of the tickets 0023 to 0029. 0031 can use the script of 0026 for its
+  reproduction if that ticket is merged first.
 - Milestones: the pure CLI is complete after 0017. Session mode works with a window-manager
   binding after 0021 and with its own hotkey after 0023.
 - Expected trivial merge conflicts: module lines in `crates/sagiri/src/lib.rs`,
