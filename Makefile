@@ -47,9 +47,10 @@ install:
 uninstall:
 	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)')
 
-# PKGEXT is fixed so that the package name does not depend on the local makepkg.conf.
+# PKGEXT and PKGDEST are fixed so that the package name and location do not depend on the
+# local makepkg.conf.
 pkg:
-	cd packaging/arch && PKGEXT=.pkg.tar.zst makepkg -f
+	cd packaging/arch && PKGDEST="$$PWD" PKGEXT=.pkg.tar.zst makepkg -f
 
 check:
 	scripts/check.sh

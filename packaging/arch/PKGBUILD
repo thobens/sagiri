@@ -36,7 +36,7 @@ prepare() {
   fi
 
   cd "$_repo"
-  cargo fetch --locked --target host-tuple
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
 }
 
 build() {
