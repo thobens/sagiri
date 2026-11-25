@@ -10,6 +10,7 @@ use sagiri::session::backend;
 use sagiri::session::control;
 use sagiri::session::core::{Command, Event, Session};
 use sagiri::session::daemon::{self, Parts};
+use sagiri::session::hotkey;
 use sagiri::session::notify::Notifiers;
 use sagiri::setup;
 use sagiri_core::config::SessionConfig;
@@ -103,6 +104,9 @@ fn socket_path(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 fn run_daemon(socket: PathBuf, active: bool, opts: setup::Options) -> anyhow::Result<u8> {
     let loaded = setup::load(&opts)?;
     let settings: SessionConfig = loaded.config.session;
+    // Checked before the backend is chosen, so that a wrong hotkey is reported on every
+    // platform and without a display.
+    hotkey::from_config(&settings)?;
     let session = Session::new(
         loaded.engine,
         Box::new(SystemClipboard::new()),

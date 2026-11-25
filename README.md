@@ -87,7 +87,8 @@ is written to stdout.
 
 While a session is active, every text copied to the clipboard is replaced by its obfuscated
 form, so that pasting it anywhere gives the obfuscated text. A session is switched on and off
-with a command, typically bound to a key in the window manager.
+with a hotkey that `sagiri-session` grabs itself, or with a command bound to a key in the
+window manager. Both ways can be used side by side.
 
 `sagiri-session run` starts the session process; it belongs in the login or window manager
 startup. `sagiri-session toggle` switches the session on or off and belongs on a key. For
@@ -110,6 +111,22 @@ other commands talk to the running process and print its state afterwards, `acti
 
 Without a running process these commands exit with status 1. `--socket <PATH>` selects
 another control socket than `$XDG_RUNTIME_DIR/sagiri/session.sock`.
+
+With `hotkey` set in the `[session]` table of the config file, `sagiri-session run` grabs
+that key combination and the combination switches the session on and off:
+
+```toml
+[session]
+hotkey = "ctrl+alt+o"
+```
+
+The `toggle` command keeps working while a hotkey is set. The syntax is described under
+[Session settings](#session-settings).
+
+- A combination that the window manager or another program already uses cannot be
+  grabbed; `sagiri-session run` then exits with status 1 and says so.
+- After a change of the keyboard layout, `sagiri-session run` has to be restarted.
+- Holding the combination switches the session once.
 
 Rules and limits:
 
@@ -179,7 +196,17 @@ notify = true
 ```
 
 - `hotkey` (default: none) is a key combination that `sagiri-session` grabs to switch the
-  session on and off.
+  session on and off (X11 only). Parts are joined with `+`; case and spaces around a part
+  do not matter, so `Ctrl + Alt + O` is the same as `ctrl+alt+o`.
+  - Modifiers: `ctrl` (or `control`), `alt`, `shift`, `super` (or `win`). At least one of
+    `ctrl`, `alt` or `super` is required.
+  - Exactly one key: a letter `a` to `z`, a digit `0` to `9`, `f1` to `f12`, `insert` or
+    `pause`. Keys that need Shift or AltGr on the current keyboard layout cannot be used.
+  - A wrong value makes `sagiri-session run` exit with status 1 on every platform, before
+    the display is checked. A combination already used by the window manager cannot be
+    grabbed and also ends `run` with a message. After a change of the keyboard layout,
+    `sagiri-session run` has to be restarted. The `toggle` command keeps working either
+    way.
 - `primary` (default: `"off"`) sets how the PRIMARY selection is treated: `"off"`,
   `"mirror"` or `"watch"`.
 - `notify` (default: `true`) switches desktop notifications on or off.

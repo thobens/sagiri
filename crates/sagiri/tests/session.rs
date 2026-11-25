@@ -118,3 +118,39 @@ fn run_is_unsupported() {
         );
     assert!(!dir.path().join("s.sock").exists());
 }
+
+/// `run(home)` with `content` as the config file.
+fn run_with_config(home: &Path, content: &str) -> Command {
+    let cmd = run(home);
+    std::fs::write(home.join("config.toml"), content).unwrap();
+    cmd
+}
+
+#[test]
+fn invalid_hotkey_exits_1() {
+    let dir = TempDir::new().unwrap();
+    run_with_config(dir.path(), "[session]\nhotkey = \"o\"\n")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr("sagiri-session: session.hotkey needs ctrl, alt or super\n");
+    assert!(!dir.path().join("s.sock").exists());
+}
+
+#[test]
+fn valid_hotkey_reaches_backend_check() {
+    let dir = TempDir::new().unwrap();
+    let reason = if cfg!(target_os = "linux") {
+        "no X display: DISPLAY is not set"
+    } else {
+        "session mode needs Linux with X11"
+    };
+    run_with_config(dir.path(), "[session]\nhotkey = \"ctrl+alt+o\"\n")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(format!(
+            "sagiri-session: session mode is not available: {reason}\n"
+        ));
+    assert!(!dir.path().join("s.sock").exists());
+}

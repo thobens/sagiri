@@ -1,7 +1,7 @@
 ---
 id: "0023"
 title: X11 global hotkey
-status: todo
+status: done
 depends_on: ["0021"]
 ---
 
