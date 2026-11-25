@@ -1,7 +1,7 @@
 ---
 id: "0027"
 title: Makefile
-status: todo
+status: done
 depends_on: ["0016", "0020"]
 ---
 

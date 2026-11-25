@@ -15,6 +15,19 @@ cargo run -p sagiri -- --help
 cargo run -p sagiri --bin sagiri-cli -- --help
 ```
 
+The `Makefile` (GNU Make) wraps the release build and the installation:
+
+```
+make                              # release build of sagiri, sagiri-cli and sagiri-session
+make sagiri-cli                   # release build of one binary
+make install PREFIX=~/.local      # copy the release binaries to ~/.local/bin
+sudo make install                 # copy them to /usr/local/bin
+make check                        # run scripts/check.sh
+```
+
+`make install` does not build; run `make` first. `make help` lists all targets and
+variables.
+
 ## Usage
 
 ```

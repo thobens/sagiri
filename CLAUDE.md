@@ -6,6 +6,7 @@ Obfuscates pasted text with consistent, key-derived fake values. Rust workspace,
 
 - Build: `cargo build`
 - Run: `cargo run -p sagiri --bin sagiri -- <args>` (or `--bin sagiri-cli`)
+- Release build and install: `make release`, `make install PREFIX=~/.local` (install does not build)
 - Quality gate: `scripts/check.sh` (fmt, clippy with `-D warnings`, tests)
 - Single test: `cargo test -p <crate> <test_name>`
 
