@@ -155,3 +155,19 @@ Manual checks on X11 (listed in the report as done or not possible):
 - Unit tests in `hotkey.rs`; two integration tests for the start-up order.
 - The manual checklist; ticket 0026 automates the first item. An implementer without a
   display states that in the report.
+
+## Deviation
+
+Added during implementation; the text above is unchanged.
+
+- **Assumption.** The design note "Auto-repeat" assumes that `Debounce` keeps a held
+  combination from toggling the session more than once.
+- **Why it does not hold.** The X server sends the first repeat after the repeat delay
+  (660 ms by default), which is longer than the 300 ms of `Debounce`. Later repeats come at
+  25 Hz and pass `Debounce` about every 320 ms. With `Debounce` alone, a held combination
+  toggles the session again and again.
+- **What was added.** `AutoRepeat` in `src/session/hotkey.rs` (unit test
+  `auto_repeat_is_recognised`). The server sends each repeat as a release and a press of the
+  same keycode with the same server time. The watcher notes every key release and drops a
+  press that follows a release of the same keycode at the same millisecond. `Debounce` is
+  still implemented and applied as specified.

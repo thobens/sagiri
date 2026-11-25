@@ -470,7 +470,7 @@ mod tests {
         assert!(d.accept(u32::MAX - 100));
         // 150 ms later, after the wrap.
         assert!(!d.accept(49));
-        // 400 ms after the previous press.
+        // 550 ms after the last accepted press.
         assert!(d.accept(449));
         let mut d = Debounce::new();
         assert!(d.accept(u32::MAX - 10));
