@@ -58,6 +58,16 @@ fn wait_exit(child: &mut Child) -> Option<i32> {
     }
 }
 
+/// Panics unless `SAGIRI_X11_TEST` is set. Everything that takes over the clipboard or
+/// the keyboard calls this first.
+fn require_x11_test() {
+    assert!(
+        std::env::var_os("SAGIRI_X11_TEST").is_some(),
+        "these tests take over the clipboard and send keys to the X display; \
+         run them with scripts/x11-test.sh"
+    );
+}
+
 /// The clipboard as an application sees it.
 struct Clipboard(arboard::Clipboard);
 
@@ -98,11 +108,7 @@ impl Session {
     /// Starts a session process with `[session]` set to `notify = false` plus `extra`,
     /// and waits until it answers on its socket.
     fn start(extra: &str) -> Self {
-        assert!(
-            std::env::var_os("SAGIRI_X11_TEST").is_some(),
-            "these tests take over the clipboard and send keys to the X display; \
-             run them with scripts/x11-test.sh"
-        );
+        require_x11_test();
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("config.toml"),
@@ -332,6 +338,7 @@ impl Owner {
     /// clipboard lists `target`.
     fn start(program: &str, args: &[&str], content: &[u8], target: &str) -> Self {
         use std::io::Write as _;
+        require_x11_test();
         let mut child = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())

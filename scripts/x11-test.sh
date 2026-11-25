@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 xvfb_run="${XVFB_RUN:-xvfb-run}"
-for program in "$xvfb_run" xdotool; do
+for program in "$xvfb_run" xdotool xclip xsel; do
     if ! command -v "$program" >/dev/null 2>&1; then
         echo "x11-test.sh: $program is not installed" >&2
         exit 2

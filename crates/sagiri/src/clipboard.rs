@@ -480,7 +480,13 @@ mod tests {
     #[test]
     fn classify_files_win_over_text() {
         for offer in [Offer::Text, Offer::NoText, Offer::Unknown] {
-            for t in all_text_probes() {
+            let cases = [
+                text("/home/alice/report.txt"),
+                text(""),
+                Probe::Absent,
+                Probe::Failed,
+            ];
+            for t in cases {
                 assert_eq!(classify(Probe::Found(2), offer, t).unwrap(), Content::Files);
             }
             assert_eq!(
