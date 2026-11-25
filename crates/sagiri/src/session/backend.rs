@@ -17,10 +17,13 @@ pub enum Backend {
     Unsupported(&'static str),
 }
 
+/// The reason given on every platform other than Linux.
+const NOT_LINUX: &str = "session mode needs Linux with X11";
+
 /// Chooses the backend from the platform and the environment.
 pub fn detect(env: EnvLookup<'_>) -> Backend {
     if !cfg!(target_os = "linux") {
-        return Backend::Unsupported("session mode needs Linux with X11");
+        return Backend::Unsupported(NOT_LINUX);
     }
     let set = |name: &str| env(name).is_some_and(|value| !value.is_empty());
     if set("WAYLAND_DISPLAY") {
@@ -45,9 +48,11 @@ fn start_x11(events: Sender<Event>, settings: &SessionConfig) -> anyhow::Result<
     super::x11::start(events, settings)
 }
 
+/// Never called: off Linux, `detect` always answers `Unsupported`. It exists so that
+/// `start` compiles everywhere, and fails with the same reason `detect` gives.
 #[cfg(not(target_os = "linux"))]
 fn start_x11(_events: Sender<Event>, _settings: &SessionConfig) -> anyhow::Result<()> {
-    anyhow::bail!("session mode is not available: session mode needs Linux with X11")
+    anyhow::bail!("session mode is not available: {NOT_LINUX}")
 }
 
 #[cfg(test)]

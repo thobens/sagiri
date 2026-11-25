@@ -26,21 +26,21 @@ pub fn start(events: Sender<Event>, _settings: &SessionConfig) -> anyhow::Result
     let (conn, screen) = RustConnection::connect(None).context("cannot connect to the X server")?;
     if conn
         .extension_information(xfixes::X11_EXTENSION_NAME)
-        .context("cannot connect to the X server")?
+        .context("cannot query the X server for the XFixes extension")?
         .is_none()
     {
         anyhow::bail!("the X server has no XFixes extension");
     }
     // QueryVersion must precede every other XFixes request.
     conn.xfixes_query_version(XFIXES_VERSION.0, XFIXES_VERSION.1)
-        .context("the X server has no XFixes extension")?
+        .context("cannot negotiate the XFixes version")?
         .reply()
-        .context("the X server has no XFixes extension")?;
+        .context("cannot negotiate the XFixes version")?;
     let clipboard = conn
         .intern_atom(false, b"CLIPBOARD")
-        .context("cannot connect to the X server")?
+        .context("cannot look up the CLIPBOARD atom")?
         .reply()
-        .context("cannot connect to the X server")?
+        .context("cannot look up the CLIPBOARD atom")?
         .atom;
     let primary = u32::from(AtomEnum::PRIMARY);
     let root = conn.setup().roots[screen].root;
