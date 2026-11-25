@@ -1,7 +1,7 @@
 ---
 id: "0032"
 title: Make `stale_socket_is_replaced` independent of tests that start processes
-status: todo
+status: done
 depends_on: ["0022"]
 ---
 
