@@ -4,6 +4,9 @@
 //!
 //! The test process is the application that copies: it sets and reads the clipboard
 //! with `arboard`.
+//!
+//! The tests refuse to run unless `SAGIRI_X11_TEST` is set, which only the script does,
+//! so that `--ignored` on a desktop never touches the real clipboard or keyboard.
 
 #![cfg(target_os = "linux")]
 
@@ -95,6 +98,11 @@ impl Session {
     /// Starts a session process with `[session]` set to `notify = false` plus `extra`,
     /// and waits until it answers on its socket.
     fn start(extra: &str) -> Self {
+        assert!(
+            std::env::var_os("SAGIRI_X11_TEST").is_some(),
+            "these tests take over the clipboard and send keys to the X display; \
+             run them with scripts/x11-test.sh"
+        );
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("config.toml"),
@@ -106,6 +114,7 @@ impl Session {
             session
                 .run_command()
                 .stdout(Stdio::null())
+                .stderr(std::fs::File::create(session.log()).unwrap())
                 .spawn()
                 .expect("cannot start sagiri-session"),
         );
@@ -118,6 +127,11 @@ impl Session {
             session.status()
         });
         session
+    }
+
+    /// Where the stderr of `run` goes. It is printed only if the test fails.
+    fn log(&self) -> PathBuf {
+        self.dir.path().join("stderr.log")
     }
 
     fn socket(&self) -> PathBuf {
@@ -176,7 +190,10 @@ impl Drop for Session {
         if let Some(mut child) = self.child.take() {
             let _ = self.client("quit");
             let code = wait_exit(&mut child);
-            if !thread::panicking() {
+            if thread::panicking() {
+                let log = std::fs::read_to_string(self.log()).unwrap_or_default();
+                eprintln!("stderr of sagiri-session run:\n{log}");
+            } else {
                 assert_eq!(code, Some(0), "sagiri-session run did not end cleanly");
             }
         }
