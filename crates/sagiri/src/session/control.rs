@@ -616,7 +616,13 @@ mod tests {
             .env(STALE_SOCKET_ENV, &path)
             .output()
             .unwrap();
-        assert!(output.status.success());
+        // The helper's output holds at most the socket path, never pasted text.
+        assert!(
+            output.status.success(),
+            "stale_socket_helper failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(path.exists());
         assert!(UnixStream::connect(&path).is_err());
         let _listener = Listener::bind(&path).unwrap();
