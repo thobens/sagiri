@@ -300,3 +300,138 @@ fn x11_hotkey_toggles() {
         session.status().filter(|s| s == "inactive")
     });
 }
+
+/// A 1x1 grey PNG.
+const PNG: [u8; 67] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x7e, 0x9b,
+    0x55, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x60, 0x00, 0x00, 0x00,
+    0x02, 0x00, 0x01, 0x48, 0xaf, 0xa4, 0x71, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82,
+];
+
+/// Runs `xclip -o` on the clipboard with `args` and returns its stdout, or `None` if it
+/// fails.
+fn xclip_out(args: &[&str]) -> Option<Vec<u8>> {
+    let out = Command::new("xclip")
+        .args(["-selection", "clipboard", "-o"])
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .expect("cannot run xclip");
+    out.status.success().then_some(out.stdout)
+}
+
+/// Another program that owns the clipboard. It runs in the foreground and is killed when
+/// dropped.
+struct Owner(Child);
+
+impl Owner {
+    /// Starts `program` with `args`, writes `content` to its stdin and waits until the
+    /// clipboard lists `target`.
+    fn start(program: &str, args: &[&str], content: &[u8], target: &str) -> Self {
+        use std::io::Write as _;
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap_or_else(|_| panic!("cannot run {program}"));
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(content).unwrap();
+        drop(stdin);
+        let owner = Owner(child);
+        wait_for("the clipboard to list the target", || {
+            let targets = String::from_utf8(xclip_out(&["-t", "TARGETS"])?).ok()?;
+            targets.lines().any(|t| t == target).then_some(())
+        });
+        owner
+    }
+
+    /// `xclip` serving `content` as `target`. It answers every request with `content`,
+    /// whatever target is asked for.
+    fn xclip(target: &str, content: &[u8]) -> Self {
+        let args = ["-selection", "clipboard", "-t", target, "-i", "-quiet"];
+        Self::start("xclip", &args, content, target)
+    }
+
+    /// `xsel` serving `text`.
+    fn xsel(text: &str) -> Self {
+        let args = ["--clipboard", "--input", "--nodetach"];
+        Self::start("xsel", &args, text.as_bytes(), "UTF8_STRING")
+    }
+}
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `xclip -t image/png` answers a text request with the PNG; the session must still treat
+/// the clipboard as holding no text and leave it alone.
+#[test]
+#[ignore = "needs an X server; run scripts/x11-test.sh"]
+fn x11_image_from_xclip_left_alone() {
+    let session = Session::start("");
+    assert_eq!(session.send("start"), "active");
+    let _owner = Owner::xclip("image/png", &PNG);
+    thread::sleep(QUIET);
+    assert_eq!(
+        xclip_out(&["-t", "image/png"]).as_deref(),
+        Some(&PNG[..]),
+        "the image is no longer served"
+    );
+    let log = std::fs::read_to_string(session.log()).unwrap();
+    assert_eq!(log.trim(), "sagiri-session: session started", "{log}");
+}
+
+#[test]
+#[ignore = "needs an X server; run scripts/x11-test.sh"]
+fn x11_cli_reads_image_from_xclip_as_no_text() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("config.toml"), "").unwrap();
+    let _owner = Owner::xclip("image/png", &PNG);
+    let out = Command::new(env!("CARGO_BIN_EXE_sagiri-cli"))
+        .env_remove("SAGIRI_KEY_FILE")
+        .env_remove("SAGIRI_CONFIG")
+        .env_remove("WAYLAND_DISPLAY")
+        .arg("--key-file")
+        .arg(dir.path().join("key"))
+        .arg("--config")
+        .arg(dir.path().join("config.toml"))
+        .args(["--in", "clipboard"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("cannot run sagiri-cli");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "sagiri-cli: the clipboard holds no text\n"
+    );
+    assert_eq!(xclip_out(&["-t", "image/png"]).as_deref(), Some(&PNG[..]));
+}
+
+#[test]
+#[ignore = "needs an X server; run scripts/x11-test.sh"]
+fn x11_replaces_text_from_xclip() {
+    let session = Session::start("");
+    assert_eq!(session.send("start"), "active");
+    let _owner = Owner::xclip("UTF8_STRING", SAMPLE.as_bytes());
+    let replaced = Clipboard::new().replaced(SAMPLE);
+    assert!(!replaced.contains(SAMPLE_IP));
+}
+
+#[test]
+#[ignore = "needs an X server; run scripts/x11-test.sh"]
+fn x11_replaces_text_from_xsel() {
+    let session = Session::start("");
+    assert_eq!(session.send("start"), "active");
+    let _owner = Owner::xsel(SAMPLE);
+    let replaced = Clipboard::new().replaced(SAMPLE);
+    assert!(!replaced.contains(SAMPLE_IP));
+}

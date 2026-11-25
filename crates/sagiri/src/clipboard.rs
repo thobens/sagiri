@@ -5,6 +5,9 @@
 
 use std::fmt;
 
+#[cfg(target_os = "linux")]
+mod targets;
+
 /// Reads and writes the system clipboard as text.
 pub trait Clipboard {
     fn get_text(&mut self) -> anyhow::Result<String>;
@@ -59,14 +62,30 @@ pub enum Probe<T> {
     Failed,
 }
 
+/// Whether the owner of a selection lists a text target among the targets it offers.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Offer {
+    /// The owner lists at least one text target.
+    Text,
+    /// The owner lists its targets, and none of them is text.
+    NoText,
+    /// Not known: the owner did not answer, or the platform has no such query.
+    Unknown,
+}
+
 const TEXT_READ_FAILED: &str = "the selection could not be read as text";
 
-/// Decides what a selection holds from a file probe and a text probe: files first, then
-/// text. A failed file probe counts as absent; a failed text probe is an error.
-pub fn classify(files: Probe<usize>, text: Probe<String>) -> anyhow::Result<Content> {
+/// Decides what a selection holds from a file probe, what the owner offers and a text
+/// probe: files first, then text. A failed file probe counts as absent. An owner that
+/// offers no text holds no text, whatever the text probe says. Otherwise a failed text
+/// probe is an error; `Offer::Unknown` counts as offering text.
+pub fn classify(files: Probe<usize>, offer: Offer, text: Probe<String>) -> anyhow::Result<Content> {
     match files {
         Probe::Found(n) if n > 0 => return Ok(Content::Files),
         Probe::Found(_) | Probe::Absent | Probe::Failed => {}
+    }
+    if offer == Offer::NoText {
+        return Ok(Content::Other);
     }
     match text {
         Probe::Found(s) if !s.is_empty() => Ok(Content::Text(s)),
@@ -136,8 +155,13 @@ impl SelectionClipboard for SystemClipboard {
         platform::check(selection)?;
         let cb = self.open()?;
         let files = probe(platform::file_list(cb, selection).map(|f| f.len()));
-        let text = probe(platform::text(cb, selection));
-        classify(files, text)
+        let offer = platform::offer(selection);
+        // An owner without text is not asked for it: the answer would be its other data.
+        let text = match offer {
+            Offer::NoText => Probe::Absent,
+            Offer::Text | Offer::Unknown => probe(platform::text(cb, selection)),
+        };
+        classify(files, offer, text)
     }
 
     fn write_text(&mut self, selection: Selection, text: &str) -> anyhow::Result<()> {
@@ -160,7 +184,7 @@ impl SelectionClipboard for SystemClipboard {
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 ))]
 mod platform {
-    use super::Selection;
+    use super::{Offer, Selection};
     use arboard::{ClearExtLinux, Clipboard, Error, GetExtLinux, LinuxClipboardKind, SetExtLinux};
     use std::path::PathBuf;
 
@@ -178,6 +202,17 @@ mod platform {
 
     pub fn file_list(cb: &mut Clipboard, selection: Selection) -> Result<Vec<PathBuf>, Error> {
         cb.get().clipboard(kind(selection)).file_list()
+    }
+
+    /// Asks the owner over X11. Only on Linux, where `x11rb` is a dependency.
+    #[cfg(target_os = "linux")]
+    pub fn offer(selection: Selection) -> Offer {
+        super::targets::offer(selection)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn offer(_selection: Selection) -> Offer {
+        Offer::Unknown
     }
 
     pub fn text(cb: &mut Clipboard, selection: Selection) -> Result<String, Error> {
@@ -208,7 +243,7 @@ mod platform {
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 )))]
 mod platform {
-    use super::Selection;
+    use super::{Offer, Selection};
     use arboard::{Clipboard, Error};
     use std::path::PathBuf;
 
@@ -223,6 +258,11 @@ mod platform {
 
     pub fn file_list(cb: &mut Clipboard, _selection: Selection) -> Result<Vec<PathBuf>, Error> {
         cb.get().file_list()
+    }
+
+    /// No query for the owner's targets here.
+    pub fn offer(_selection: Selection) -> Offer {
+        Offer::Unknown
     }
 
     pub fn text(cb: &mut Clipboard, _selection: Selection) -> Result<String, Error> {
@@ -419,68 +459,120 @@ mod tests {
         Probe::Found(s.to_string())
     }
 
-    #[test]
-    fn classify_files_win_over_text() {
-        let cases = [
-            text("/home/alice/report.txt"),
+    /// Every kind of text probe.
+    fn all_text_probes() -> [Probe<String>; 4] {
+        [
+            text("host 192.0.2.7"),
             text(""),
             Probe::Absent,
             Probe::Failed,
-        ];
-        for t in cases {
-            assert_eq!(classify(Probe::Found(2), t).unwrap(), Content::Files);
+        ]
+    }
+
+    /// Every file probe that does not find files.
+    fn no_files() -> [Probe<usize>; 3] {
+        [Probe::Absent, Probe::Found(0), Probe::Failed]
+    }
+
+    /// The offers under which the text probe decides.
+    const TEXT_OFFERS: [Offer; 2] = [Offer::Text, Offer::Unknown];
+
+    #[test]
+    fn classify_files_win_over_text() {
+        for offer in [Offer::Text, Offer::NoText, Offer::Unknown] {
+            for t in all_text_probes() {
+                assert_eq!(classify(Probe::Found(2), offer, t).unwrap(), Content::Files);
+            }
+            assert_eq!(
+                classify(Probe::Found(1), offer, Probe::Failed).unwrap(),
+                Content::Files
+            );
+            assert_eq!(
+                classify(Probe::Found(1), offer, Probe::Absent).unwrap(),
+                Content::Files
+            );
         }
-        assert_eq!(
-            classify(Probe::Found(1), Probe::Failed).unwrap(),
-            Content::Files
-        );
-        assert_eq!(
-            classify(Probe::Found(1), Probe::Absent).unwrap(),
-            Content::Files
-        );
     }
 
     #[test]
     fn classify_text() {
-        for files in [Probe::Absent, Probe::Found(0)] {
-            let c = classify(files, text("host 192.0.2.7")).unwrap();
-            assert_eq!(c, Content::Text("host 192.0.2.7".into()));
+        for offer in TEXT_OFFERS {
+            for files in [Probe::Absent, Probe::Found(0)] {
+                let c = classify(files, offer, text("host 192.0.2.7")).unwrap();
+                assert_eq!(c, Content::Text("host 192.0.2.7".into()));
+            }
         }
     }
 
     #[test]
     fn classify_no_text_is_other() {
-        for files in [Probe::Absent, Probe::Found(0), Probe::Failed] {
-            assert_eq!(classify(files, Probe::Absent).unwrap(), Content::Other);
+        for offer in TEXT_OFFERS {
+            for files in no_files() {
+                assert_eq!(
+                    classify(files, offer, Probe::Absent).unwrap(),
+                    Content::Other
+                );
+            }
         }
     }
 
     #[test]
     fn classify_empty_text_is_other() {
-        for files in [Probe::Absent, Probe::Found(0), Probe::Failed] {
-            assert_eq!(classify(files, text("")).unwrap(), Content::Other);
+        for offer in TEXT_OFFERS {
+            for files in no_files() {
+                assert_eq!(classify(files, offer, text("")).unwrap(), Content::Other);
+            }
         }
     }
 
+    /// Fail closed: an owner that offers text, or might, and whose read fails is an error.
     #[test]
     fn classify_failed_text_is_error() {
-        for files in [Probe::Absent, Probe::Found(0), Probe::Failed] {
-            let err = classify(files, Probe::Failed).unwrap_err();
-            assert_eq!(err.to_string(), "the selection could not be read as text");
+        for offer in TEXT_OFFERS {
+            for files in no_files() {
+                let err = classify(files, offer, Probe::Failed).unwrap_err();
+                assert_eq!(err.to_string(), "the selection could not be read as text");
+            }
         }
     }
 
     #[test]
     fn classify_failed_files_falls_through_to_text() {
-        let cases = [
-            (text("x"), Content::Text("x".into())),
-            (text(""), Content::Other),
-            (Probe::Absent, Content::Other),
-        ];
-        for (t, expected) in cases {
-            assert_eq!(classify(Probe::Failed, t).unwrap(), expected);
+        for offer in TEXT_OFFERS {
+            let cases = [
+                (text("x"), Content::Text("x".into())),
+                (text(""), Content::Other),
+                (Probe::Absent, Content::Other),
+            ];
+            for (t, expected) in cases {
+                assert_eq!(classify(Probe::Failed, offer, t).unwrap(), expected);
+            }
+            assert!(classify(Probe::Failed, offer, Probe::Failed).is_err());
         }
-        assert!(classify(Probe::Failed, Probe::Failed).is_err());
+    }
+
+    /// An owner such as `xclip -t image/png` answers a text request with its image, so the
+    /// text read fails; what the owner offers decides.
+    #[test]
+    fn classify_owner_without_text_is_other_whatever_the_text_read_returns() {
+        for t in all_text_probes() {
+            assert_eq!(
+                classify(Probe::Absent, Offer::NoText, t).unwrap(),
+                Content::Other
+            );
+        }
+        for t in all_text_probes() {
+            assert_eq!(
+                classify(Probe::Found(0), Offer::NoText, t).unwrap(),
+                Content::Other
+            );
+        }
+        for t in all_text_probes() {
+            assert_eq!(
+                classify(Probe::Failed, Offer::NoText, t).unwrap(),
+                Content::Other
+            );
+        }
     }
 
     #[test]

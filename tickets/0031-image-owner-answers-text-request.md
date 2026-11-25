@@ -1,7 +1,7 @@
 ---
 id: "0031"
 title: Leave an image alone when its owner answers a text request with other data
-status: todo
+status: done
 depends_on: ["0021"]
 ---
 
