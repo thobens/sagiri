@@ -28,6 +28,38 @@ make check                        # run scripts/check.sh
 `make install` does not build; run `make` first. `make help` lists all targets and
 variables.
 
+## Installing
+
+From source, build first and then copy the three binaries to `$PREFIX/bin`:
+
+```
+make release
+make install PREFIX=~/.local      # or: sudo make install PREFIX=/usr/local
+```
+
+`make uninstall` with the same `PREFIX` removes them again.
+
+On Arch Linux and its derivatives, `make pkg` builds a package from the local checkout with
+`makepkg` (`packaging/arch/PKGBUILD`). It runs the tests and leaves the package in
+`packaging/arch`. `pacman` then installs and removes it like any other package:
+
+```
+make pkg
+sudo pacman -U packaging/arch/sagiri-*.pkg.tar.zst
+sudo pacman -R sagiri
+```
+
+The package installs `sagiri`, `sagiri-cli` and `sagiri-session` to `/usr/bin`. The
+optional dependency `libnotify` provides the desktop notifications of session mode.
+
+To start session mode at login with i3, add the two lines from
+[Session mode](#session-mode) to the i3 config:
+
+```
+exec --no-startup-id sagiri-session run
+bindsym $mod+Shift+o exec --no-startup-id sagiri-session toggle
+```
+
 ## Usage
 
 ```

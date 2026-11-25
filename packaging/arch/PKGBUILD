@@ -1,0 +1,55 @@
+# Builds Sagiri from the local checkout that contains this file. Nothing is downloaded
+# except the crates listed in Cargo.lock. Run `make pkg` in the repository root, or
+# `makepkg -f` in this directory.
+
+pkgname=sagiri
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones'
+arch=('x86_64' 'aarch64')
+url='https://github.com/thobens/sagiri'
+license=('MIT OR Apache-2.0')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo' 'make')
+optdepends=('libnotify: desktop notifications for session mode')
+source=()
+
+_repo="$(realpath "$startdir/../..")"
+
+# Prints the `version` of the `[workspace.package]` table in the given Cargo.toml.
+_workspace_version() {
+  awk '
+    /^[[:space:]]*\[/ { in_table = ($0 ~ /^[[:space:]]*\[workspace\.package\][[:space:]]*$/) }
+    in_table && /^[[:space:]]*version[[:space:]]*=/ {
+      sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*$/, ""); print; exit
+    }
+  ' "$1"
+}
+
+prepare() {
+  local version
+  version="$(_workspace_version "$_repo/Cargo.toml")"
+  if [[ "$version" != "$pkgver" ]]; then
+    printf 'pkgver %s in %s does not match version "%s" in %s\n' \
+      "$pkgver" "$startdir/PKGBUILD" "$version" "$_repo/Cargo.toml" >&2
+    return 1
+  fi
+
+  cd "$_repo"
+  cargo fetch --locked --target host-tuple
+}
+
+build() {
+  make -C "$_repo" release CARGO_FLAGS=--frozen
+}
+
+check() {
+  cd "$_repo"
+  cargo test --frozen --workspace
+}
+
+package() {
+  make -C "$_repo" install DESTDIR="$pkgdir" PREFIX=/usr
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/" \
+    "$_repo/LICENSE-MIT" "$_repo/LICENSE-APACHE"
+}

@@ -21,7 +21,7 @@ BINDIR     := $(DESTDIR)$(PREFIX_DIR)/bin
 
 .DEFAULT_GOAL := all
 
-.PHONY: all build release $(BINS) install uninstall check clean help
+.PHONY: all build release $(BINS) install uninstall pkg check clean help
 
 all: release
 
@@ -47,6 +47,10 @@ install:
 uninstall:
 	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)')
 
+# PKGEXT is fixed so that the package name does not depend on the local makepkg.conf.
+pkg:
+	cd packaging/arch && PKGEXT=.pkg.tar.zst makepkg -f
+
 check:
 	scripts/check.sh
 
@@ -63,6 +67,7 @@ help:
 	@echo '  sagiri-session  release build of that binary only'
 	@echo '  install         copy the release binaries to $$(DESTDIR)$$(PREFIX)/bin (does not build)'
 	@echo '  uninstall       remove them from there'
+	@echo '  pkg             build an Arch Linux package in packaging/arch (makepkg -f)'
 	@echo '  check           run scripts/check.sh'
 	@echo '  clean           cargo clean'
 	@echo '  help            print this help'
