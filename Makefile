@@ -37,18 +37,15 @@ $(BINS):
 # Never builds: `sudo make install` must not leave root-owned files in the target directory.
 install:
 	@for bin in $(BINS); do \
-		if [ ! -x $(RELEASE_DIR)/$$bin ]; then \
+		if [ ! -x '$(RELEASE_DIR)'/"$$bin" ]; then \
 			echo "missing $(RELEASE_DIR)/$$bin: run 'make release' first" >&2; \
 			exit 1; \
 		fi; \
 	done
-	@for bin in $(BINS); do \
-		echo install -Dm755 $(RELEASE_DIR)/$$bin $(BINDIR)/$$bin; \
-		install -Dm755 $(RELEASE_DIR)/$$bin $(BINDIR)/$$bin || exit 1; \
-	done
+	$(foreach b,$(BINS),install -Dm755 '$(RELEASE_DIR)/$(b)' '$(BINDIR)/$(b)' &&) true
 
 uninstall:
-	rm -f $(addprefix $(BINDIR)/,$(BINS))
+	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)')
 
 check:
 	scripts/check.sh
@@ -74,6 +71,8 @@ help:
 	@echo '  CARGO        = $(CARGO)'
 	@echo '  CARGO_FLAGS  = $(CARGO_FLAGS)'
 	@echo '  PREFIX       = $(PREFIX)'
+	@echo '                 a leading ~ or ~/ means $$HOME; ~user is not expanded'
 	@echo '  DESTDIR      = $(DESTDIR)'
 	@echo '  BINS         = $(BINS)'
 	@echo '  binaries in  $(RELEASE_DIR) (CARGO_TARGET_DIR/release if set)'
+	@echo 'Paths must not contain a single quote.'
