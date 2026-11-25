@@ -124,11 +124,11 @@ Rules and limits:
   status 1 and names the reason.
 
 The session process shows a desktop notification when the session starts or stops, when a
-selection cannot be replaced, and when the connection to the display is lost. Notifications are shown through `notify-send` (package
-`libnotify` on Arch Linux). If `notify-send` is missing, `run` prints one warning and keeps
-running without notifications. `notify = false` in `[session]` switches them off. The same
-messages always go to the standard error of `sagiri-session run` as well. Notifications never
-contain copied text.
+selection cannot be replaced, and when the connection to the display is lost. Notifications
+are shown through `notify-send` (package `libnotify` on Arch Linux). If `notify-send` is
+missing, `run` prints one warning and keeps running without notifications. `notify = false`
+in `[session]` switches them off. The same messages always go to the standard error of
+`sagiri-session run` as well. Notifications never contain copied text.
 
 ## Configuration
 
