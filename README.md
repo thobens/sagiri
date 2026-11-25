@@ -171,6 +171,16 @@ replaces what PRIMARY holds at that moment. In watch mode nothing is mirrored fr
 clipboard to PRIMARY. If PRIMARY cannot be written, it is cleared and the clipboard is left
 as it is.
 
+How applications behaved in a test on X11 without a window manager (a Qt application was
+not tested):
+
+- xterm: the highlight disappears. xterm takes the selection when the button is released,
+  so a drag is never interrupted.
+- GTK3 (mousepad): the highlight disappears. GTK takes PRIMARY during the drag, but holding
+  the button prevents the replacement; a 3 s drag over three lines was complete.
+- Firefox: the highlight stays. Firefox takes the selection when the button is released, so
+  a drag is not interrupted.
+
 The session process shows a desktop notification when the session starts or stops, when a
 selection cannot be replaced, and when the connection to the display is lost. Notifications
 are shown through `notify-send` (package `libnotify` on Arch Linux). If `notify-send` is
