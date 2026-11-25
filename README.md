@@ -83,6 +83,49 @@ holds files or no text, a clipboard that cannot be read or written, a key or con
 2 usage error (an invalid flag, or no `--in` with a terminal on stdin). On an error nothing
 is written to stdout.
 
+## Session mode
+
+While a session is active, every text copied to the clipboard is replaced by its obfuscated
+form, so that pasting it anywhere gives the obfuscated text. A session is switched on and off
+with a command, typically bound to a key in the window manager.
+
+`sagiri-session run` starts the session process; it belongs in the login or window manager
+startup. `sagiri-session toggle` switches the session on or off and belongs on a key. For
+i3:
+
+```
+exec --no-startup-id sagiri-session run
+bindsym $mod+Shift+o exec --no-startup-id sagiri-session toggle
+```
+
+`run` accepts `--active` (start the session right away), `--key-file` and `--config`. The
+other commands talk to the running process and print its state afterwards, `active` or
+`inactive`:
+
+- `start` starts the session and prints `active`.
+- `stop` stops the session and prints `inactive`.
+- `toggle` switches the session and prints the new state.
+- `status` changes nothing and prints the current state.
+- `quit` ends the session process and prints `inactive`.
+
+Without a running process these commands exit with status 1. `--socket <PATH>` selects
+another control socket than `$XDG_RUNTIME_DIR/sagiri/session.sock`.
+
+Rules and limits:
+
+- Copied text comes back as plain text; formatting is lost.
+- Copied files and images are not changed. File names are not obfuscated.
+- For a short moment after each copy the original is on the clipboard. A clipboard manager
+  with a history may record it; its history should be paused or switched off while a session
+  is used. Session mode prevents accidental pasting and does not protect against other
+  programs on the same machine.
+- Copying a part of an already obfuscated text obfuscates that part again.
+- Linux with X11 only. Under Wayland, on macOS, or without `DISPLAY`, `run` exits with
+  status 1 and names the reason.
+
+Until desktop notifications exist, messages of the session process (session started or
+stopped, errors) appear on the standard error of `sagiri-session run`.
+
 ## Configuration
 
 An optional TOML file teaches Sagiri what it cannot detect on its own. The location is the

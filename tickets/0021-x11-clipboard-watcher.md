@@ -1,7 +1,7 @@
 ---
 id: "0021"
 title: X11 clipboard watcher
-status: todo
+status: done
 depends_on: ["0020"]
 ---
 

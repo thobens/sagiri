@@ -61,24 +61,60 @@ fn missing_runtime_dir_exits_1() {
         );
 }
 
-#[test]
-fn run_without_backend_exits_1() {
-    let dir = TempDir::new().unwrap();
-    let socket = dir.path().join("s.sock");
-    std::fs::write(dir.path().join("config.toml"), "").unwrap();
-    session(dir.path())
-        .arg("run")
+/// `sagiri-session run` with a socket, key and config inside `home`.
+fn run(home: &Path) -> Command {
+    std::fs::write(home.join("config.toml"), "").unwrap();
+    let mut cmd = session(home);
+    cmd.arg("run")
         .arg("--socket")
-        .arg(&socket)
+        .arg(home.join("s.sock"))
         .arg("--key-file")
-        .arg(dir.path().join("key"))
+        .arg(home.join("key"))
         .arg("--config")
-        .arg(dir.path().join("config.toml"))
+        .arg(home.join("config.toml"));
+    cmd
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_without_display_exits_1() {
+    let dir = TempDir::new().unwrap();
+    run(dir.path()).assert().code(1).stdout("").stderr(
+        "sagiri-session: session mode is not available: no X display: DISPLAY is not set\n",
+    );
+    assert!(!dir.path().join("s.sock").exists());
+    // The key was created where the flag pointed.
+    assert!(dir.path().join("key").exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_under_wayland_exits_1() {
+    let dir = TempDir::new().unwrap();
+    run(dir.path())
+        .env("WAYLAND_DISPLAY", "wayland-0")
+        .env("DISPLAY", ":0")
         .assert()
         .code(1)
         .stdout("")
-        .stderr("sagiri-session: session mode has no display backend on this platform\n");
-    assert!(!socket.exists());
-    // The key was created where the flag pointed.
-    assert!(dir.path().join("key").exists());
+        .stderr(
+            "sagiri-session: session mode is not available: \
+             Wayland sessions are not supported yet\n",
+        );
+    assert!(!dir.path().join("s.sock").exists());
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn run_is_unsupported() {
+    let dir = TempDir::new().unwrap();
+    run(dir.path())
+        .env("DISPLAY", ":0")
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(
+            "sagiri-session: session mode is not available: session mode needs Linux with X11\n",
+        );
+    assert!(!dir.path().join("s.sock").exists());
 }

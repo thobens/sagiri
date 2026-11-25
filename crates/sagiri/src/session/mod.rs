@@ -6,3 +6,5 @@ pub mod control;
 pub mod core;
 pub mod daemon;
 pub mod notify;
+#[cfg(target_os = "linux")]
+pub mod x11;
