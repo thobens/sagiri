@@ -1,7 +1,7 @@
 ---
 id: "0022"
 title: Desktop notifications
-status: todo
+status: done
 depends_on: ["0020"]
 ---
 

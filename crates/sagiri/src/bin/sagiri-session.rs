@@ -10,7 +10,7 @@ use sagiri::session::backend;
 use sagiri::session::control;
 use sagiri::session::core::{Command, Event, Session};
 use sagiri::session::daemon::{self, Parts};
-use sagiri::session::notify::StderrNotifier;
+use sagiri::session::notify::Notifiers;
 use sagiri::setup;
 use sagiri_core::config::SessionConfig;
 use sagiri_core::paths;
@@ -102,12 +102,12 @@ fn socket_path(explicit: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 
 fn run_daemon(socket: PathBuf, active: bool, opts: setup::Options) -> anyhow::Result<u8> {
     let loaded = setup::load(&opts)?;
+    let settings: SessionConfig = loaded.config.session;
     let session = Session::new(
         loaded.engine,
         Box::new(SystemClipboard::new()),
-        Box::new(StderrNotifier),
+        Box::new(Notifiers::for_session(&settings)),
     );
-    let settings: SessionConfig = loaded.config.session;
     let exit = daemon::run(Parts {
         session,
         socket,
