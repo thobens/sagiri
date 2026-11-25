@@ -273,6 +273,12 @@ scripts/check.sh
 This runs rustfmt, clippy with warnings as errors, and all tests. CI runs `scripts/check.sh`
 on Linux and macOS.
 
+`scripts/x11-test.sh` runs the X11 integration tests of session mode on Linux. They start
+the real `sagiri-session` against a virtual X server and check clipboard replacement and the
+hotkey. The script needs `xvfb-run`, which comes with the X server's Xvfb package, and
+`xdotool`; it exits 2 if one of them is missing. It is not part of `scripts/check.sh` and
+does not run in CI, so it has to be run by hand.
+
 ## More
 
 - `PLAN.md`: how the MVP is planned.
