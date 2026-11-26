@@ -64,6 +64,7 @@ Read this file before starting any ticket. It holds everything the tickets share
 | [0035](0035-release-workflow.md) | Release workflow with immutable releases | 0028, 0033, 0034 |
 | [0036](0036-renovate.md) | Renovate with automerge rules | 0013, 0034, 0035 |
 | [0037](0037-core-api-docs.md) | Documented `sagiri-core` API with testable examples | – |
+| [0038](0038-overlong-term-panics.md) | Reject a term that is too long instead of panicking | 0012, 0037 |
 
 Order of the MVP tickets: 0001 → 0002 → 0003 are strictly sequential. After 0003, the
 tickets 0004, 0008 and 0009 are independent of each other. After 0004, the tickets 0005 and
@@ -99,6 +100,9 @@ Order of the tickets from 0033 on:
   once `master` is pushed to GitHub. Each ticket lists what can only be verified there.
 - Expected trivial merge conflicts: the user-facing `README.md`, the `Makefile` and
   `CLAUDE.md`.
+- 0038 is a bug ticket found while running 0037. It touches `rules/term.rs`, the tests of
+  the config file and one line of the user-facing `README.md`, and is independent of the
+  tickets 0033 to 0036.
 
 This file already describes the state after all of these tickets (layout, pinned API, files,
 crates, workflows). A ticket from 0014 on edits the user-facing `README.md` and `CLAUDE.md`
