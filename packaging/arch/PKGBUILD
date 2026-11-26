@@ -4,7 +4,7 @@
 
 pkgname=sagiri
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones'
 arch=('x86_64' 'aarch64')
 url='https://github.com/thobens/sagiri'

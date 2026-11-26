@@ -1,7 +1,7 @@
 ---
 id: "0033"
 title: systemd user unit for `sagiri-session`
-status: todo
+status: done
 depends_on: ["0027", "0029"]
 ---
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=Sagiri session mode: obfuscates copied text while a session is active
+Documentation=https://github.com/thobens/sagiri
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=DISPLAY
+ConditionEnvironment=!WAYLAND_DISPLAY
+
+[Service]
+ExecStart=@BINDIR@/sagiri-session run
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

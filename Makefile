@@ -5,6 +5,7 @@ CARGO       ?= cargo
 CARGO_FLAGS ?= --locked
 PREFIX      ?= /usr/local
 DESTDIR     ?=
+USERUNITDIR ?= $(PREFIX)/lib/systemd/user
 BINS        := sagiri sagiri-cli sagiri-session
 
 ifneq ($(CARGO_TARGET_DIR),)
@@ -18,6 +19,15 @@ endif
 # recipe shell.
 PREFIX_DIR := $(patsubst ~/%,$(HOME)/%,$(patsubst ~,$(HOME),$(PREFIX)))
 BINDIR     := $(DESTDIR)$(PREFIX_DIR)/bin
+
+# The systemd user unit is installed on Linux only. Its ExecStart= names the binary at run
+# time, so @BINDIR@ is replaced by the path without DESTDIR. The replacement is escaped for
+# the sed expression of `install` (backslash, `&` and the delimiter `|`).
+UNAME_S         := $(shell uname -s)
+USERUNITDIR_DIR := $(patsubst ~/%,$(HOME)/%,$(patsubst ~,$(HOME),$(USERUNITDIR)))
+UNIT_SRC        := packaging/systemd/sagiri-session.service.in
+UNIT_FILE       := $(DESTDIR)$(USERUNITDIR_DIR)/sagiri-session.service
+UNIT_BINDIR     := $(subst |,\|,$(subst &,\&,$(subst \,\\,$(PREFIX_DIR)/bin)))
 
 .DEFAULT_GOAL := all
 
@@ -43,9 +53,14 @@ install:
 		fi; \
 	done
 	$(foreach b,$(BINS),install -Dm755 '$(RELEASE_DIR)/$(b)' '$(BINDIR)/$(b)' &&) true
+ifeq ($(UNAME_S),Linux)
+	install -d '$(DESTDIR)$(USERUNITDIR_DIR)'
+	sed 's|@BINDIR@|$(UNIT_BINDIR)|g' '$(UNIT_SRC)' > '$(UNIT_FILE)'
+	chmod 644 '$(UNIT_FILE)'
+endif
 
 uninstall:
-	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)')
+	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)') '$(UNIT_FILE)'
 
 # PKGEXT and PKGDEST are fixed so that the package name and location do not depend on the
 # local makepkg.conf.
@@ -66,8 +81,9 @@ help:
 	@echo '  sagiri          release build of that binary only'
 	@echo '  sagiri-cli      release build of that binary only'
 	@echo '  sagiri-session  release build of that binary only'
-	@echo '  install         copy the release binaries to $$(DESTDIR)$$(PREFIX)/bin (does not build)'
-	@echo '  uninstall       remove them from there'
+	@echo '  install         copy the release binaries to $$(DESTDIR)$$(PREFIX)/bin (does not build);'
+	@echo '                  on Linux also the systemd user unit to $$(DESTDIR)$$(USERUNITDIR)'
+	@echo '  uninstall       remove them and the unit from there'
 	@echo '  pkg             build an Arch Linux package in packaging/arch (makepkg -f)'
 	@echo '  check           run scripts/check.sh'
 	@echo '  clean           cargo clean'
@@ -79,6 +95,9 @@ help:
 	@echo '  PREFIX       = $(PREFIX)'
 	@echo '                 a leading ~ or ~/ means $$HOME; ~user is not expanded'
 	@echo '  DESTDIR      = $(DESTDIR)'
+	@echo '  USERUNITDIR  = $(USERUNITDIR)'
+	@echo '                 same ~ expansion as PREFIX; for an install into the home'
+	@echo '                 directory use ~/.local/share/systemd/user'
 	@echo '  BINS         = $(BINS)'
 	@echo '  binaries in  $(RELEASE_DIR) (CARGO_TARGET_DIR/release if set)'
 	@echo 'Paths must not contain a single quote.'

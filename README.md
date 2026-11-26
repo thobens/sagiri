@@ -39,6 +39,17 @@ make install PREFIX=~/.local      # or: sudo make install PREFIX=/usr/local
 
 `make uninstall` with the same `PREFIX` removes them again.
 
+On Linux, `make install` also installs the systemd user unit `sagiri-session.service` to
+`$USERUNITDIR` (default `$PREFIX/lib/systemd/user`); see
+[Starting with systemd](#starting-with-systemd). An install into the home directory needs
+`USERUNITDIR=~/.local/share/systemd/user`, because `~/.local/lib/systemd/user` is not on the
+search path of the user manager:
+
+```
+make install PREFIX=~/.local USERUNITDIR=~/.local/share/systemd/user
+make uninstall PREFIX=~/.local USERUNITDIR=~/.local/share/systemd/user
+```
+
 On Arch Linux and its derivatives, `make pkg` builds a package from the local checkout with
 `makepkg` (`packaging/arch/PKGBUILD`). It runs the tests and leaves the package in
 `packaging/arch`. `pacman` then installs and removes it like any other package:
@@ -49,10 +60,13 @@ sudo pacman -U packaging/arch/sagiri-*.pkg.tar.zst
 sudo pacman -R sagiri
 ```
 
-The package installs `sagiri`, `sagiri-cli` and `sagiri-session` to `/usr/bin`. The
-optional dependency `libnotify` provides the desktop notifications of session mode.
+The package installs `sagiri`, `sagiri-cli` and `sagiri-session` to `/usr/bin` and the
+systemd user unit to `/usr/lib/systemd/user/sagiri-session.service`. Neither `make install`
+nor the package enables the unit. The optional dependency `libnotify` provides the desktop
+notifications of session mode.
 
-To start session mode at login with i3, add the two lines from
+To start session mode at login with systemd, see
+[Starting with systemd](#starting-with-systemd). Without systemd, add the two lines from
 [Session mode](#session-mode) to the i3 config:
 
 ```
@@ -232,6 +246,60 @@ are shown through `notify-send` (package `libnotify` on Arch Linux). If `notify-
 missing, `run` prints one warning and keeps running without notifications. `notify = false`
 in `[session]` switches them off. The same messages always go to the standard error of
 `sagiri-session run` as well. Notifications never contain copied text.
+
+### Starting with systemd
+
+On Linux, `make install` and the Arch package install the systemd user unit
+`sagiri-session.service`. It runs `sagiri-session run` with the defaults, restarts it after
+a failure and stops it at logout. Enabling and starting it:
+
+```
+systemctl --user enable --now sagiri-session.service
+```
+
+`systemctl --user disable --now sagiri-session.service` stops and disables it again.
+
+- The unit is started by `graphical-session.target`. A window manager session that never
+  reaches that target (plain i3 started from a display manager, for example) starts the
+  unit from its config instead:
+
+  ```
+  exec --no-startup-id systemctl --user start sagiri-session.service
+  ```
+
+- The user manager needs `DISPLAY` and `XAUTHORITY` in its environment. Most distributions
+  import them at X start-up. Where they are missing, this line in the session start-up
+  imports them:
+
+  ```
+  dbus-update-activation-environment --systemd DISPLAY XAUTHORITY
+  ```
+
+  Without `DISPLAY`, or with `WAYLAND_DISPLAY` set, the unit is skipped and not started.
+- The unit replaces the line `exec --no-startup-id sagiri-session run`. With both in place
+  the second process finds the first one running and exits with an error. The `bindsym`
+  line for `sagiri-session toggle` stays.
+- After a change of the config file or of the keyboard layout:
+  `systemctl --user restart sagiri-session.service`.
+- To start a session at login, a drop-in created with
+  `systemctl --user edit sagiri-session.service` clears `ExecStart=` and sets it again with
+  `--active` (the path is the one in the installed unit, `systemctl --user cat
+  sagiri-session.service` shows it):
+
+  ```ini
+  [Service]
+  ExecStart=
+  ExecStart=/usr/bin/sagiri-session run --active
+  ```
+
+- `journalctl --user -u sagiri-session.service` shows the messages of the process. They
+  never contain copied text.
+
+A wrong `hotkey` or a combination that is already grabbed makes the process exit with
+status 1. systemd restarts it a few times and then leaves the unit in the state `failed`;
+the journal names the reason.
+
+The i3 lines above remain the way to start session mode without systemd.
 
 ## Configuration
 
