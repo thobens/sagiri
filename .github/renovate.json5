@@ -1,0 +1,63 @@
+// Renovate configuration, read by the hosted Mend Renovate GitHub App from the default
+// branch. README.md, section "Dependency updates", describes the rules in words.
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    // Base preset. Among others it turns on the Dependency Dashboard issue, which lists
+    // the updates that wait for their seven days.
+    'config:recommended',
+    // Pins actions to a commit SHA, also an action that is added by tag, and keeps the
+    // SHA and the version comment in step.
+    'helpers:pinGitHubActionDigests',
+    // The `*_VERSION` variables in the workflows, each below a `# renovate:` comment.
+    'customManagers:githubActionsVersions',
+  ],
+  // Cargo.toml files and Cargo.lock, the pinned actions in the workflows, and the custom
+  // manager of the preset above. Nothing else is managed.
+  enabledManagers: ['cargo', 'github-actions', 'custom.regex'],
+  // Raise the version in Cargo.toml together with Cargo.lock, so that Cargo.toml always
+  // names a version that was tested.
+  rangeStrategy: 'bump',
+  // Renovate merges a pull request itself, on a later run, and only when every check on
+  // it has passed. GitHub's auto-merge would depend on required checks in the branch
+  // rules of the repository.
+  platformAutomerge: false,
+  // Off: it updates every transitive dependency at once and cannot honour the waiting
+  // period.
+  lockFileMaintenance: {
+    enabled: false,
+  },
+  packageRules: [
+    // Patch updates of any version: no branch and no pull request before the release is
+    // seven days old, then merged automatically if all checks pass.
+    {
+      matchUpdateTypes: ['patch'],
+      minimumReleaseAge: '7 days',
+      internalChecksFilter: 'strict',
+      automerge: true,
+    },
+    // Minor updates from 1.0 on (`4.6` -> `4.7`): the same as patch updates. A minor
+    // update of a 0.x version (`0.30` -> `0.31`) is incompatible for Cargo; this rule
+    // does not match it, so it is opened at once and merged by a person, like a major
+    // update. The pattern is tested against the locked version where there is one, and
+    // allows the leading `v` of action versions.
+    {
+      matchUpdateTypes: ['minor'],
+      matchCurrentVersion: '!/^v?0\\./',
+      minimumReleaseAge: '7 days',
+      internalChecksFilter: 'strict',
+      automerge: true,
+    },
+    // Major updates and every other update type keep the defaults: a pull request at
+    // once, merged by a person.
+
+    // Both crates must stay at the version that another dependency already brings in
+    // (tickets/README.md).
+    {
+      matchPackageNames: ['x11rb', 'signal-hook'],
+      prBodyNotes: [
+        '`cargo tree -p sagiri -i {{{depName}}}` must show one version of `{{{depName}}}` after this update. Two versions mean the update has to wait for the dependency that brings in the other one.',
+      ],
+    },
+  ],
+}

@@ -1,7 +1,7 @@
 ---
 id: "0036"
 title: Renovate with automerge rules
-status: todo
+status: done
 depends_on: ["0013", "0034", "0035"]
 ---
 

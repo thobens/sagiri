@@ -514,6 +514,34 @@ packs the release binaries that are already built into `dist/`.
 A published release cannot be changed or repeated: its tag and assets are fixed. A mistake
 needs a new version.
 
+## Dependency updates
+
+Renovate, as the hosted Mend Renovate GitHub App, opens one pull request per update. Its
+configuration is `.github/renovate.json5`. It covers the crates in the `Cargo.toml` files
+and `Cargo.lock`, the actions in the workflows, which stay pinned to a commit SHA, and the
+`*_VERSION` variables in the workflows, each of which has a `# renovate:` comment line above
+it that names the crate.
+
+- A patch update of any version, and a minor update of a version from 1.0 on (`4.6` to
+  `4.7`), gets its pull request seven days after the release. Before that, Renovate creates
+  neither a branch nor a pull request. Renovate merges the pull request itself once all
+  checks on it have passed.
+- A major update, and a minor update of a `0.x` version (`0.30` to `0.31`, which Cargo
+  treats as incompatible), gets its pull request at once and is merged by a person.
+- Every other kind of update, for example a new commit SHA for an unchanged action
+  version, also gets its pull request at once and is merged by a person.
+
+The checks include `scripts/check.sh`, and with it the golden vector tests, and the audit
+for pull requests that change `Cargo.lock`. The golden vector tests are what keeps an
+automatic update from changing replacements: an update that changes any output fails
+them. A pull request with a failing check is not merged automatically and stays open for a
+person. Such a pull request is never fixed by changing a golden vector.
+
+A version in `Cargo.toml` is raised together with `Cargo.lock`. Lock file maintenance is
+off. The Dependency Dashboard issue lists the updates that are waiting for their seven
+days. The pull requests for `x11rb` and `signal-hook` carry a note: `cargo tree -p sagiri
+-i <crate>` must show one version after the update.
+
 ## More
 
 - `PLAN.md`: how the MVP is planned.
