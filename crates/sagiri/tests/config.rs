@@ -131,6 +131,26 @@ fn unknown_key_exits_1_with_empty_stdout() {
 }
 
 #[test]
+fn overlong_term_exits_1() {
+    let dir = TempDir::new().unwrap();
+    let cfg = dir.path().join("c.toml");
+    fs::write(&cfg, format!("terms = [\"{}\"]\n", "a".repeat(200_000))).unwrap();
+    let o = sagiri(dir.path())
+        .arg("--config")
+        .arg(&cfg)
+        .write_stdin("a 198.51.100.7\n")
+        .assert()
+        .code(1)
+        .get_output()
+        .clone();
+    assert!(o.stdout.is_empty());
+    let stderr = String::from_utf8(o.stderr).unwrap();
+    assert!(stderr.contains("terms[0]"), "{stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(!stderr.contains("aaaa"), "{stderr}");
+}
+
+#[test]
 fn rules_array_exits_1() {
     let dir = TempDir::new().unwrap();
     let cfg = dir.path().join("c.toml");

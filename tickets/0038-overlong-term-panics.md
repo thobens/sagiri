@@ -1,7 +1,7 @@
 ---
 id: "0038"
 title: Reject a term that is too long instead of panicking
-status: todo
+status: done
 depends_on: ["0012", "0037"]
 ---
 

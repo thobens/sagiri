@@ -833,6 +833,15 @@ phone = false
         let e = load_str("terms = [\"a\\nb\"]").unwrap_err().to_string();
         assert!(e.contains("terms[0]"), "{e}");
     }
+
+    #[test]
+    fn overlong_term_is_rejected_on_load() {
+        let src = format!("terms = [\"{}\"]\n", "a".repeat(1001));
+        let e = load_str(&src).unwrap_err().to_string();
+        assert!(e.contains("config.toml"), "{e}");
+        assert!(e.contains("terms[0]"), "{e}");
+        assert!(e.contains("term is longer than 1000 characters"), "{e}");
+    }
     #[test]
     fn session_defaults() {
         let c = load_str("").unwrap();

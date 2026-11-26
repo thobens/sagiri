@@ -7,6 +7,9 @@ use regex::{Regex, RegexBuilder};
 use crate::config::ConfigError;
 use crate::rule::{Context, Kind, Rule};
 
+/// The most characters a term may have after trimming.
+const MAX_TERM_CHARS: usize = 1000;
+
 /// Checks the terms of the config. An invalid term is an error naming `terms[index]`.
 pub(crate) fn validate_terms(terms: &[String]) -> Result<(), ConfigError> {
     for (i, t) in terms.iter().enumerate() {
@@ -16,6 +19,9 @@ pub(crate) fn validate_terms(terms: &[String]) -> Result<(), ConfigError> {
         }
         if t.trim().chars().count() < 2 {
             return Err(bad("term is shorter than two characters"));
+        }
+        if t.trim().chars().count() > MAX_TERM_CHARS {
+            return Err(bad("term is longer than 1000 characters"));
         }
     }
     Ok(())
@@ -37,13 +43,8 @@ impl TermRule {
     /// # Errors
     ///
     /// [`ConfigError::Invalid`] with key `terms[index]` and no path, for a term that
-    /// contains a line break or has fewer than two characters after trimming.
-    ///
-    /// # Panics
-    ///
-    /// If a term is too long for the size limit of the `regex` crate. That happens from
-    /// tens of thousands of characters, depending on the characters and the `regex`
-    /// version. [`Config::load`](crate::config::Config::load) does not check this.
+    /// contains a line break, has fewer than two or more than 1000 characters after
+    /// trimming, or cannot be compiled into a pattern.
     ///
     /// ```
     /// use sagiri_core::engine::Engine;
@@ -68,13 +69,16 @@ impl TermRule {
         validate_terms(terms)?;
         let patterns = terms
             .iter()
-            .map(|t| {
+            .enumerate()
+            .map(|(i, t)| {
                 RegexBuilder::new(&regex::escape(t.trim()))
                     .case_insensitive(true)
                     .build()
-                    .expect("an escaped literal is a valid regex")
+                    .map_err(|_| {
+                        ConfigError::invalid(format!("terms[{i}]"), "term cannot be compiled")
+                    })
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         Ok(TermRule { patterns })
     }
 }
@@ -168,5 +172,42 @@ mod tests {
             let e = bad(t).unwrap_err();
             assert!(e.to_string().contains("terms[1]"), "{t:?}: {e}");
         }
+    }
+
+    #[test]
+    fn overlong_term_is_error() {
+        let long = "a".repeat(1001);
+        for (terms, index) in [
+            (vec![long.clone()], "terms[0]"),
+            (vec!["fine".to_string(), long.clone()], "terms[1]"),
+        ] {
+            let e = TermRule::new(&terms).map(|_| ()).unwrap_err();
+            assert!(matches!(e, ConfigError::Invalid { .. }), "{e}");
+            let msg = e.to_string();
+            assert!(msg.contains(index), "{msg}");
+            assert!(msg.contains("term is longer than 1000 characters"), "{msg}");
+            assert!(!msg.contains("aaaa"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn term_at_the_limit_is_accepted() {
+        for c in ["a", "ä", "1"] {
+            let term = c.repeat(1000);
+            let rule = TermRule::new(std::slice::from_ref(&term)).unwrap();
+            let text = format!("see {term} here");
+            assert_eq!(rule.detect(&text), vec![4..4 + term.len()], "{c:?}");
+        }
+    }
+
+    #[test]
+    fn overlong_term_is_measured_after_trimming() {
+        let term = format!("  {}  ", "a".repeat(1000));
+        assert!(TermRule::new(&[term]).is_ok());
+    }
+
+    #[test]
+    fn huge_term_does_not_panic() {
+        assert!(TermRule::new(&["a".repeat(200_000)]).is_err());
     }
 }

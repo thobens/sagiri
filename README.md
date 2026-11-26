@@ -389,7 +389,7 @@ phone = false
   `https://github.com/org/repo` but not `api.github.com`. In an email address an allowed
   domain is kept and the local part is still replaced.
 - `terms` are matched literally, ignoring case, as whole words. They need at least two
-  characters.
+  and at most 1000 characters.
 - `[rules]` accepts `term`, `url`, `email`, `ipv4`, `ipv6`, `hostname`, `payment_card`,
   `iban` and `phone`.
 - Unknown keys are errors, so that a typo does not silently disable protection.
