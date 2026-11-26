@@ -400,6 +400,35 @@ the script has set `SAGIRI_X11_TEST`, so that `cargo test -- --ignored` never ta
 real clipboard or keyboard. The script is not part of `scripts/check.sh` and does not run in
 CI, so it has to be run by hand.
 
+`scripts/audit.sh` (or `make audit`) checks the built binaries against the RustSec
+advisory database. Without arguments it builds `sagiri`, `sagiri-cli` and `sagiri-session`
+in release mode with `cargo auditable`, through `make release CARGO='cargo auditable'`, and
+then runs `cargo audit bin` on them. `cargo auditable` embeds the list of linked crates in
+each binary, so the check covers exactly what is in the binary: development dependencies
+and crates for other platforms do not count. With arguments, the script audits the
+binaries at the given paths and builds nothing.
+
+The script needs two tools, installed with:
+
+```
+cargo install --locked cargo-audit cargo-auditable
+```
+
+The versions CI uses are the `_VERSION` variables at the top of
+`.github/workflows/audit.yml`; appending `@<version>` to each name installs the same ones.
+
+It needs network access, because it downloads the advisory database. Exit status: 0 if no
+binary has a known vulnerability, 1 if at least one has, 2 if `cargo-audit` or
+`cargo-auditable` is missing or an argument is not a file, 3 if the check is incomplete,
+for example because a binary was built without `cargo auditable` or the database could not
+be fetched. Advisories of the kinds "unmaintained" and "yanked" are printed as warnings and
+do not change the exit status.
+
+Its result changes when a new advisory is published, so it is not part of
+`scripts/check.sh`. CI runs it on Linux and macOS once a day, on every push to `master` and
+on pull requests that change `Cargo.lock`, a `Cargo.toml`, the Makefile, the script or its
+workflow (`.github/workflows/audit.yml`).
+
 ## More
 
 - `PLAN.md`: how the MVP is planned.

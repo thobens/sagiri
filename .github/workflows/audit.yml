@@ -1,0 +1,38 @@
+name: Audit
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  push:
+    branches: [master]
+  pull_request:
+    paths:
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - scripts/audit.sh
+      - Makefile
+      - .github/workflows/audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_AUDIT_VERSION: 0.23.0
+  CARGO_AUDITABLE_VERSION: 0.7.8
+
+jobs:
+  audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install
+      - run: >-
+          cargo install --locked
+          cargo-audit@$CARGO_AUDIT_VERSION
+          cargo-auditable@$CARGO_AUDITABLE_VERSION
+      - run: scripts/audit.sh

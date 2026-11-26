@@ -31,7 +31,7 @@ UNIT_BINDIR     := $(subst |,\|,$(subst &,\&,$(subst \,\\,$(PREFIX_DIR)/bin)))
 
 .DEFAULT_GOAL := all
 
-.PHONY: all build release $(BINS) install uninstall pkg check clean help
+.PHONY: all build release $(BINS) install uninstall pkg check audit clean help
 
 all: release
 
@@ -75,6 +75,9 @@ pkg:
 check:
 	scripts/check.sh
 
+audit:
+	scripts/audit.sh
+
 clean:
 	$(CARGO) clean
 
@@ -91,6 +94,7 @@ help:
 	@echo '  uninstall       remove them and the unit from there'
 	@echo '  pkg             build an Arch Linux package in packaging/arch (makepkg -f)'
 	@echo '  check           run scripts/check.sh'
+	@echo '  audit           run scripts/audit.sh (cargo auditable build, cargo audit bin)'
 	@echo '  clean           cargo clean'
 	@echo '  help            print this help'
 	@echo ''
