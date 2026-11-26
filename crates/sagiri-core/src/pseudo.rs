@@ -290,6 +290,10 @@ impl DetStream {
     }
 
     /// Next 8 bytes, big-endian.
+    ///
+    /// # Panics
+    ///
+    /// When the stream is exhausted; see [`fill`](Self::fill).
     pub fn next_u64(&mut self) -> u64 {
         let mut b = [0u8; 8];
         self.fill(&mut b);
@@ -300,7 +304,7 @@ impl DetStream {
     ///
     /// # Panics
     ///
-    /// If `n == 0`.
+    /// If `n == 0`, or when the stream is exhausted; see [`fill`](Self::fill).
     ///
     /// ```
     /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
@@ -328,7 +332,7 @@ impl DetStream {
     ///
     /// # Panics
     ///
-    /// On an empty slice.
+    /// On an empty slice, or when the stream is exhausted; see [`fill`](Self::fill).
     ///
     /// ```
     /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};

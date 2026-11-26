@@ -15,7 +15,7 @@ pub mod term;
 pub mod url;
 
 /// All built-in rules, in `Kind` order: url, email, ipv4, ipv6, hostname,
-/// payment_card, iban, phone. The term rule is not included: it needs the user's terms
+/// `payment_card`, iban, phone. The term rule is not included: it needs the user's terms
 /// and is built with [`term::TermRule::new`].
 ///
 /// ```

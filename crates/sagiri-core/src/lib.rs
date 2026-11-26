@@ -4,7 +4,9 @@
 //! addresses, payment card numbers, IBANs, phone numbers and user-defined terms) and
 //! replaces each with a realistic-looking fake value derived from a secret key. The same
 //! key and the same original always give the same replacement, in every future version of
-//! this crate. Nothing about the originals is stored; replacements cannot be reversed.
+//! this crate. Nothing about the originals is stored, and replacements cannot be reversed
+//! without the key. Whoever has the key can recompute them, and for small value spaces such
+//! as IPv4 addresses can find the original by trying every value.
 //!
 //! This crate holds no terminal I/O. It never writes pasted text anywhere.
 //!

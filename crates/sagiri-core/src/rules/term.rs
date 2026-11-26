@@ -39,6 +39,13 @@ impl TermRule {
     /// [`ConfigError::Invalid`] with key `terms[index]` and no path, for a term that
     /// contains a line break or has fewer than two characters after trimming.
     ///
+    /// # Panics
+    ///
+    /// If a term is too long for the size limit of the `regex` crate. The limit depends
+    /// on the characters: a term of ASCII letters panics from about 131,000 characters, a
+    /// term of non-ASCII letters from about 62,000, a term of digits or punctuation from
+    /// about 327,000. [`Config::load`](crate::config::Config::load) does not check this.
+    ///
     /// ```
     /// use sagiri_core::engine::Engine;
     /// use sagiri_core::rules::term::TermRule;
