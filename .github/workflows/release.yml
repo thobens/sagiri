@@ -1,7 +1,9 @@
 name: Release
 
 # A tag push builds, attests and publishes a release. A manual run is a dry run: it
-# builds the same archives as workflow artifacts and publishes nothing.
+# builds the same archives as workflow artifacts and publishes nothing. The steps that
+# attest and publish are gated on the event, not on the ref, because a manual run can be
+# started from a tag too.
 
 on:
   push:
@@ -31,7 +33,7 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install
       - name: Check the tag
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: scripts/release-tag-check.sh "$TAG"
@@ -81,7 +83,7 @@ jobs:
       - id: package
         run: echo "archive=$(scripts/package.sh "$TARGET")" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.archive }}
@@ -93,7 +95,7 @@ jobs:
 
   publish:
     needs: build
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write

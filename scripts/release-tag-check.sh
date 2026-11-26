@@ -20,11 +20,10 @@ fi
 tag="$1"
 commit="${2:-HEAD}"
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 2
 
-version="$(cargo metadata --format-version 1 --no-deps --locked |
-    jq -r '.packages[] | select(.name == "sagiri") | .version')"
-if [ -z "$version" ]; then
+if ! version="$(cargo metadata --format-version 1 --no-deps --locked |
+    jq -r '.packages[] | select(.name == "sagiri") | .version')" || [ -z "$version" ]; then
     echo "release-tag-check.sh: could not read the workspace version" >&2
     exit 2
 fi

@@ -9,7 +9,7 @@
 #
 # Exit status:
 #   0  the archive was written
-#   1  staging or packing failed
+#   1  the version could not be read, or staging or packing failed
 #   2  <target> is missing, or a binary is not built
 set -euo pipefail
 
@@ -18,6 +18,10 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
     exit 2
 fi
 target="$1"
+
+# Any other failing command (make, cp, tar, gzip) ends the script with status 1, so that
+# its own status (make and tar use 2) is not mistaken for a usage error.
+trap 'exit 1' ERR
 
 cd "$(dirname "$0")/.."
 
@@ -30,9 +34,8 @@ for bin in "${bins[@]}"; do
     fi
 done
 
-version="$(cargo metadata --format-version 1 --no-deps --locked |
-    jq -r '.packages[] | select(.name == "sagiri") | .version')"
-if [ -z "$version" ]; then
+if ! version="$(cargo metadata --format-version 1 --no-deps --locked |
+    jq -r '.packages[] | select(.name == "sagiri") | .version')" || [ -z "$version" ]; then
     echo "package.sh: could not read the workspace version" >&2
     exit 1
 fi
