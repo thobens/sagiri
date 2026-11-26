@@ -65,6 +65,14 @@ trap 'rm -f "$log"' EXIT
 cargo audit --color never bin -- "${paths[@]}" 2>&1 | tee "$log"
 audit_status="${PIPESTATUS[0]}"
 
+# cargo-audit exits 1 both for a vulnerability and for fatal errors such as an advisory
+# database that cannot be fetched or a broken config file. Its status is therefore read
+# together with its messages, and anything not recognised ends in status 3, never 0.
+if ! grep -qE "Loaded [0-9]+ security advisories" "$log"; then
+    echo "audit.sh: the advisory database was not loaded; nothing was checked" >&2
+    exit 3
+fi
+
 incomplete=0
 for path in "${paths[@]}"; do
     if ! grep -qF "Found 'cargo auditable' data in $path (" "$log"; then
@@ -73,19 +81,18 @@ for path in "${paths[@]}"; do
     fi
 done
 
-case "$audit_status" in
-    0) ;;
-    1)
-        echo "audit.sh: at least one binary has a known vulnerability" >&2
-        exit 1
-        ;;
-    *)
-        echo "audit.sh: cargo audit failed with status $audit_status" >&2
-        exit 3
-        ;;
-esac
+if grep -qE "[0-9]+ vulnerabilit(y|ies) found in " "$log"; then
+    echo "audit.sh: at least one binary has a known vulnerability" >&2
+    exit 1
+fi
+
+if [ "$audit_status" -ne 0 ]; then
+    echo "audit.sh: cargo audit failed with status $audit_status and reported no vulnerability; the check is incomplete" >&2
+    exit 3
+fi
 
 if [ "$incomplete" -ne 0 ]; then
     exit 3
 fi
+
 echo "audit.sh: no known vulnerability in ${paths[*]}"
