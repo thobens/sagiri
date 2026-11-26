@@ -84,8 +84,12 @@ jobs:
           target/release/sagiri
           target/release/sagiri-cli
           target/release/sagiri-session
+      # The assignment is a command of its own, so that a failing package.sh fails the
+      # step. Inside the `echo` its status would be lost and the output would be empty.
       - id: package
-        run: echo "archive=$(scripts/package.sh "$TARGET")" >> "$GITHUB_OUTPUT"
+        run: |
+          archive="$(scripts/package.sh "$TARGET")"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
         if: github.event_name == 'push'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

@@ -45,6 +45,8 @@ $(BINS):
 	$(CARGO) build $(CARGO_FLAGS) --release -p sagiri --bin $@
 
 # Never builds: `sudo make install` must not leave root-owned files in the target directory.
+# The directory is created with `install -d`: `install -D` creates it with GNU coreutils
+# only, the `install` of macOS takes `-D` as an option with an argument and creates nothing.
 install:
 	@for bin in $(BINS); do \
 		if [ ! -x '$(RELEASE_DIR)'/"$$bin" ]; then \
@@ -52,7 +54,8 @@ install:
 			exit 1; \
 		fi; \
 	done
-	$(foreach b,$(BINS),install -Dm755 '$(RELEASE_DIR)/$(b)' '$(BINDIR)/$(b)' &&) true
+	install -d '$(BINDIR)'
+	$(foreach b,$(BINS),install -m 755 '$(RELEASE_DIR)/$(b)' '$(BINDIR)/$(b)' &&) true
 ifeq ($(UNAME_S),Linux)
 	install -d '$(DESTDIR)$(USERUNITDIR_DIR)'
 	sed 's|@BINDIR@|$(UNIT_BINDIR)|g' '$(UNIT_SRC)' > '$(UNIT_FILE).tmp' || \
