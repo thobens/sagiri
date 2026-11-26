@@ -408,7 +408,8 @@ each binary, so the check covers exactly what is in the binary: development depe
 and crates for other platforms do not count. With arguments, the script audits the
 binaries at the given paths and builds nothing.
 
-The script needs two tools, installed with:
+The script needs two tools; `cargo-auditable` only when it builds. Both are installed
+with:
 
 ```
 cargo install --locked cargo-audit cargo-auditable
@@ -417,12 +418,17 @@ cargo install --locked cargo-audit cargo-auditable
 The versions CI uses are the `_VERSION` variables at the top of
 `.github/workflows/audit.yml`; appending `@<version>` to each name installs the same ones.
 
-It needs network access, because it downloads the advisory database. Exit status: 0 if no
-binary has a known vulnerability, 1 if at least one has, 2 if `cargo-audit` or
-`cargo-auditable` is missing or an argument is not a file, 3 if the check is incomplete,
-for example because a binary was built without `cargo auditable` or the database could not
-be fetched. Advisories of the kinds "unmaintained" and "yanked" are printed as warnings and
-do not change the exit status.
+It needs network access, because it downloads the advisory database. Exit status:
+
+- 0: no binary has a known vulnerability.
+- 1: at least one binary has a known vulnerability.
+- 2: `cargo-audit` is missing, `cargo-auditable` is missing and the script has to build
+  (no arguments), or an argument is not a file.
+- 3: the check is incomplete, for example because a binary was built without
+  `cargo auditable` or the database could not be fetched.
+
+Advisories of the kinds "unmaintained" and "yanked" are printed as warnings and do not
+change the exit status.
 
 Its result changes when a new advisory is published, so it is not part of
 `scripts/check.sh`. CI runs it on Linux and macOS once a day, on every push to `master` and

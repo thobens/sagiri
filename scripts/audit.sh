@@ -9,7 +9,8 @@
 # Exit status:
 #   0  no binary has a known vulnerability
 #   1  at least one binary has a known vulnerability
-#   2  cargo-audit or cargo-auditable is not installed, or an argument is not a file
+#   2  cargo-audit is not installed, cargo-auditable is not installed and the script has
+#      to build (no arguments), or an argument is not a file
 #   3  the audit is incomplete: a binary has no embedded dependency data, or
 #      `cargo audit` failed for another reason (for example the advisory database could
 #      not be fetched)
@@ -56,9 +57,11 @@ fi
 log="$(mktemp)" || exit 3
 trap 'rm -f "$log"' EXIT
 
-# `cargo audit bin` exits 0 for a binary without embedded data and only prints a warning,
-# and its JSON output does not tell the two cases apart. The script therefore requires the
-# message that it prints for a complete scan, once per binary.
+# `cargo audit bin` exits 0 for a binary without embedded data and only prints a warning.
+# Its JSON output (`--json`, cargo-audit 0.23.0) does not tell the two cases apart either:
+# the reports differ only in `lockfile.dependency-count`, and the status lines are not
+# printed. The script therefore requires the message that the text output prints for a
+# complete scan, once per binary. If a later version rewords it, every run exits 3.
 cargo audit --color never bin -- "${paths[@]}" 2>&1 | tee "$log"
 audit_status="${PIPESTATUS[0]}"
 
