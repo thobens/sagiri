@@ -2,6 +2,10 @@
 //!
 //! Error messages name the file, the key or array index and the position. They never
 //! contain a value from the file.
+//!
+//! A [`Config`] is plain data. [`Allowlist::new`] and
+//! [`TermRule::new`](crate::rules::term::TermRule::new) turn its entries into what an
+//! [`Engine`](crate::engine::Engine) uses, and [`RuleToggles::enabled`] selects the rules.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -24,23 +28,31 @@ pub enum ConfigError {
     /// The file exists but cannot be read.
     #[error("cannot read config file {}: {kind}", .path.display())]
     Read {
+        /// The config file.
         path: PathBuf,
+        /// What went wrong.
         kind: std::io::ErrorKind,
     },
     /// Syntax error or wrong structure in the TOML.
     #[error("{}: line {line}, column {column}: {detail}", .path.display())]
     Toml {
+        /// The config file.
         path: PathBuf,
+        /// Line of the error, counting from 1.
         line: usize,
+        /// Column of the error in characters, counting from 1.
         column: usize,
+        /// What is wrong, naming the key. Never contains a value from the file.
         detail: String,
     },
     /// An entry in `allow` or `terms` is not usable.
     #[error("{}{key}: {reason}", PathPrefix(.path))]
     Invalid {
+        /// The config file; `None` if the entries did not come from a file.
         path: Option<PathBuf>,
         /// For example `allow[2]`.
         key: String,
+        /// What is wrong, as a fixed text.
         reason: &'static str,
     },
 }
@@ -82,6 +94,9 @@ impl ConfigError {
 }
 
 /// The parsed config file. Every field has a default.
+///
+/// [`Config::default`] is the configuration without a file: no allowlist, no terms,
+/// every rule on.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
@@ -89,6 +104,7 @@ pub struct Config {
     pub allow: Vec<String>,
     /// Literal terms that are always replaced.
     pub terms: Vec<String>,
+    /// Which rules are switched on.
     pub rules: RuleToggles,
     /// Settings read by `sagiri-session` only.
     pub session: SessionConfig,
@@ -123,22 +139,35 @@ pub enum PrimaryMode {
     /// PRIMARY is left alone.
     #[default]
     Off,
+    /// Text that the session writes to the clipboard is written to PRIMARY too.
     Mirror,
+    /// Experimental: text selected on PRIMARY is replaced there, without a copy.
     Watch,
 }
 
 /// One switch per rule. Rules are on unless switched off.
+///
+/// The field names are the [`Kind::id`] values and the keys of the `[rules]` table.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct RuleToggles {
+    /// The rule for [`Kind::Term`].
     pub term: bool,
+    /// The rule for [`Kind::Url`].
     pub url: bool,
+    /// The rule for [`Kind::Email`].
     pub email: bool,
+    /// The rule for [`Kind::Ipv4`].
     pub ipv4: bool,
+    /// The rule for [`Kind::Ipv6`].
     pub ipv6: bool,
+    /// The rule for [`Kind::Hostname`].
     pub hostname: bool,
+    /// The rule for [`Kind::PaymentCard`].
     pub payment_card: bool,
+    /// The rule for [`Kind::Iban`].
     pub iban: bool,
+    /// The rule for [`Kind::Phone`].
     pub phone: bool,
 }
 
@@ -160,6 +189,22 @@ impl Default for RuleToggles {
 
 impl RuleToggles {
     /// True if the rule for `kind` is switched on.
+    ///
+    /// ```
+    /// use sagiri_core::config::RuleToggles;
+    /// use sagiri_core::rule::Kind;
+    /// use sagiri_core::rules::default_rules;
+    ///
+    /// let toggles = RuleToggles { phone: false, ..RuleToggles::default() };
+    /// assert!(toggles.enabled(Kind::Ipv4));
+    /// assert!(!toggles.enabled(Kind::Phone));
+    ///
+    /// let rules: Vec<_> = default_rules()
+    ///     .into_iter()
+    ///     .filter(|r| toggles.enabled(r.kind()))
+    ///     .collect();
+    /// assert_eq!(rules.len(), default_rules().len() - 1);
+    /// ```
     pub fn enabled(&self, kind: Kind) -> bool {
         match kind {
             Kind::Term => self.term,
@@ -177,6 +222,36 @@ impl RuleToggles {
 
 impl Config {
     /// Reads and validates the file at `path`.
+    ///
+    /// The file is TOML. Unknown keys are errors, missing keys take their defaults. The
+    /// entries of `allow` and `terms` are checked here, so that a config that loads also
+    /// builds an [`Allowlist`] and a [`TermRule`](crate::rules::term::TermRule).
+    ///
+    /// # Errors
+    ///
+    /// - [`ConfigError::NotFound`] if there is no file at `path`.
+    /// - [`ConfigError::Read`] if the file cannot be read.
+    /// - [`ConfigError::Toml`] for a syntax error, an unknown key or a value of the wrong
+    ///   type.
+    /// - [`ConfigError::Invalid`] for an entry of `allow` or `terms` that cannot be used.
+    ///
+    /// ```
+    /// use sagiri_core::config::{Config, ConfigError};
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let path = dir.path().join("config.toml");
+    /// std::fs::write(&path, "allow = [\"*.example.net\"]\n[rules]\nphone = false\n")?;
+    ///
+    /// let config = Config::load(&path)?;
+    /// assert_eq!(config.allow, ["*.example.net"]);
+    /// assert!(!config.rules.phone);
+    /// assert!(config.rules.ipv4);
+    ///
+    /// std::fs::write(&path, "terms = [\"x\"]\n")?;
+    /// let err = Config::load(&path).unwrap_err();
+    /// assert!(matches!(err, ConfigError::Invalid { ref key, .. } if key == "terms[0]"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn load(path: &Path) -> Result<Config, ConfigError> {
         let src = std::fs::read_to_string(path).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => ConfigError::NotFound(path.to_path_buf()),
@@ -197,6 +272,37 @@ impl Config {
 ///
 /// `None` means that there is no file and the defaults apply. A file named by flag or
 /// environment variable must exist; a missing file at the XDG path is not an error.
+///
+/// `env` looks up environment variables; pass `&|k| std::env::var_os(k)` for the process
+/// environment. An empty `SAGIRI_CONFIG` counts as unset. The XDG path is
+/// `config.toml` in [`config_dir_with`](paths::config_dir_with); without a usable `HOME`
+/// there is no XDG path, and the result is `None`.
+///
+/// # Errors
+///
+/// [`ConfigError::NotFound`] if the file named by the flag or by `SAGIRI_CONFIG` does not
+/// exist.
+///
+/// ```
+/// use sagiri_core::config::{ConfigError, resolve_path};
+/// use std::ffi::OsString;
+///
+/// let home = tempfile::tempdir()?;
+/// let env = |k: &str| (k == "HOME").then(|| OsString::from(home.path()));
+///
+/// // No file at the XDG path: the defaults apply.
+/// assert_eq!(resolve_path(None, &env)?, None);
+///
+/// let file = home.path().join(".config/sagiri/config.toml");
+/// std::fs::create_dir_all(file.parent().unwrap())?;
+/// std::fs::write(&file, "")?;
+/// assert_eq!(resolve_path(None, &env)?, Some(file));
+///
+/// // A file named by flag must exist.
+/// let missing = home.path().join("missing.toml");
+/// assert!(matches!(resolve_path(Some(&missing), &env), Err(ConfigError::NotFound(_))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn resolve_path(
     flag: Option<&Path>,
     env: &dyn Fn(&str) -> Option<OsString>,
@@ -328,6 +434,8 @@ enum Entry {
 }
 
 /// Values that are never replaced.
+///
+/// `Debug` shows the number of entries, never the entries themselves.
 pub struct Allowlist {
     entries: Vec<Entry>,
 }
@@ -382,6 +490,35 @@ impl Allowlist {
 
     /// Builds the list from `Config::allow`. An invalid entry is an error naming
     /// `allow[index]`.
+    ///
+    /// Entries are trimmed. Each entry is one of:
+    ///
+    /// - a network such as `192.0.2.0/24` or `2001:db8::/32`, covering every address in it;
+    /// - a wildcard such as `*.example.com`, covering every name below `example.com` but
+    ///   not `example.com` itself;
+    /// - any other text, covering exactly that value, ignoring ASCII case. An entry that is
+    ///   an IP address also covers other spellings of the same address.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Invalid`] with key `allow[index]` and no path, for an entry that is
+    /// empty, contains a line break, or is a malformed network or wildcard.
+    ///
+    /// ```
+    /// use sagiri_core::config::Allowlist;
+    ///
+    /// let entries = ["192.0.2.0/24", "*.example.com", "Jane.Doe@example.org"].map(String::from);
+    /// let allow = Allowlist::new(&entries)?;
+    ///
+    /// assert!(allow.matches("192.0.2.10"));
+    /// assert!(allow.matches("www.example.com"));
+    /// assert!(!allow.matches("example.com"));
+    /// assert!(allow.matches("jane.doe@EXAMPLE.org"));
+    /// assert!(!allow.matches("198.51.100.7"));
+    ///
+    /// assert!(Allowlist::new(&["192.0.2.0/33".to_string()]).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(entries: &[String]) -> Result<Self, ConfigError> {
         let mut out = Vec::with_capacity(entries.len());
         for (i, raw) in entries.iter().enumerate() {
@@ -418,6 +555,21 @@ impl Allowlist {
     }
 
     /// True if the whole `value` is covered by an entry.
+    ///
+    /// The comparison ignores ASCII case, a trailing dot of a hostname for wildcards, and
+    /// the spelling of an IP address. A wildcard `*.d` covers every value that ends in
+    /// `.d`.
+    ///
+    /// ```
+    /// use sagiri_core::config::Allowlist;
+    ///
+    /// let allow = Allowlist::new(&["2001:db8::/32".to_string(), "*.example.net".to_string()])?;
+    /// assert!(allow.matches("2001:DB8:0:0::1"));
+    /// assert!(allow.matches("api.example.net."));
+    /// assert!(!allow.matches("example.net"));
+    /// assert!(!Allowlist::empty().matches("api.example.net"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn matches(&self, value: &str) -> bool {
         if self.entries.is_empty() {
             return false;

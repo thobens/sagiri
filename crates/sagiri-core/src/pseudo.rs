@@ -2,6 +2,10 @@
 //!
 //! Every derivation is HMAC-SHA256 under the scheme label `sagiri/v1`. No `rand` crate.
 //! The output is a compatibility contract locked by golden vectors.
+//!
+//! Every function takes a `domain` label that separates the uses of the key: the same input
+//! under two domains gives unrelated outputs. For a fixed key, domain and input the output
+//! is the same on every call and in every future version.
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -17,12 +21,25 @@ const CONSONANTS: &[u8] = b"bdfgklmnprstvz";
 const VOWELS: &[u8] = b"aeiou";
 
 /// Source of all derived values for one key.
+///
+/// All randomness of Sagiri comes from here. Rules reach it through
+/// [`Context::pseudo`](crate::rule::Context::pseudo).
 pub struct Pseudonymizer {
     key: Zeroizing<[u8; 32]>,
 }
 
 impl Pseudonymizer {
     /// Copies the key; the copy is zeroized on drop.
+    ///
+    /// ```
+    /// use sagiri_core::key::Key;
+    /// use sagiri_core::pseudo::Pseudonymizer;
+    ///
+    /// let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    /// let p = Pseudonymizer::new(&key);
+    /// drop(key); // the pseudonymizer keeps its own copy
+    /// assert_eq!(p.mimic("doc", b"seed", "abc"), p.mimic("doc", b"seed", "abc"));
+    /// ```
     pub fn new(key: &Key) -> Self {
         Pseudonymizer {
             key: Zeroizing::new(*key.as_bytes()),
@@ -42,7 +59,25 @@ impl Pseudonymizer {
 
     /// Deterministic byte stream for (domain, input).
     ///
-    /// Panics if `domain` contains a NUL byte.
+    /// The stream is indistinguishable from random to anyone without the key, and is the
+    /// same for the same key, domain and input.
+    ///
+    /// # Panics
+    ///
+    /// If `domain` contains a NUL byte.
+    ///
+    /// ```
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+    /// let mut a = [0u8; 16];
+    /// let mut b = [0u8; 16];
+    /// p.stream("doc", b"192.0.2.1").fill(&mut a);
+    /// p.stream("doc", b"192.0.2.1").fill(&mut b);
+    /// assert_eq!(a, b);
+    ///
+    /// p.stream("other", b"192.0.2.1").fill(&mut b);
+    /// assert_ne!(a, b);
+    /// ```
     pub fn stream(&self, domain: &str, input: &[u8]) -> DetStream {
         let mut base = self.domain_mac(domain);
         base.update(input);
@@ -79,7 +114,23 @@ impl Pseudonymizer {
 
     /// Keyed bijection on `0..2^bits`, for `2 <= bits <= 64`.
     ///
-    /// Panics if `bits` is out of range or `value >= 2^bits`.
+    /// Distinct values always map to distinct values, so two originals never share a
+    /// replacement.
+    ///
+    /// # Panics
+    ///
+    /// If `bits` is out of range, `value >= 2^bits` or `domain` contains a NUL byte.
+    ///
+    /// ```
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+    /// // 192.0.2.1 as a number, a golden vector of the test key.
+    /// assert_eq!(p.permute("ip4", 32, 3_221_225_985), 1_423_900_168);
+    ///
+    /// let mut all: Vec<u64> = (0..16).map(|v| p.permute("doc", 4, v)).collect();
+    /// all.sort();
+    /// assert_eq!(all, (0..16).collect::<Vec<u64>>());
+    /// ```
     pub fn permute(&self, domain: &str, bits: u32, value: u64) -> u64 {
         assert!((2..=64).contains(&bits), "bits out of range");
         assert!(bits == 64 || value >> bits == 0, "value out of range");
@@ -97,7 +148,22 @@ impl Pseudonymizer {
 
     /// Keyed bijection on the subset of `0..2^bits` for which `member` is true.
     ///
-    /// Precondition: `member(value)`.
+    /// The result is a member again, and distinct members map to distinct members. This is
+    /// how a value stays in its category, a public address for example. The cost grows with
+    /// the share of non-members, so the subset should be a large part of the range.
+    ///
+    /// # Panics
+    ///
+    /// If `member(value)` is false, or for the cases of [`permute`](Self::permute).
+    ///
+    /// ```
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+    /// let odd = |v: u64| v % 2 == 1;
+    /// let out = p.permute_within("doc", 8, 37, odd);
+    /// assert!(odd(out) && out < 256);
+    /// assert_eq!(p.permute_within("doc", 8, 37, odd), out);
+    /// ```
     pub fn permute_within(
         &self,
         domain: &str,
@@ -120,6 +186,25 @@ impl Pseudonymizer {
     /// Letters become pronounceable ASCII letters (case kept), digits become ASCII digits,
     /// everything else is copied. The result never equals `shape` if `shape` has a letter
     /// or digit.
+    ///
+    /// The output has as many characters as `shape`, so a replacement keeps the length and
+    /// layout of its original. It contains a line break only where `shape` has one.
+    ///
+    /// # Panics
+    ///
+    /// If `domain` contains a NUL byte.
+    ///
+    /// ```
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+    /// // A golden vector of the test key.
+    /// assert_eq!(p.mimic("num", b"x", "12-34 AB9"), "01-53 RA6");
+    ///
+    /// let out = p.mimic("doc", b"jane", "Jane Doe");
+    /// assert_ne!(out, "Jane Doe");
+    /// assert_eq!(out.len(), 8);
+    /// assert_eq!(out.find(' '), Some(4));
+    /// ```
     pub fn mimic(&self, domain: &str, seed: &[u8], shape: &str) -> String {
         let has_content = shape.chars().any(|c| c.is_alphabetic() || c.is_numeric());
         let mut retry: u32 = 0;
@@ -171,6 +256,9 @@ impl Pseudonymizer {
 }
 
 /// Deterministic byte stream; see [`Pseudonymizer::stream`].
+///
+/// Each method consumes bytes from the stream, so the order of calls matters: the same
+/// sequence of calls on the same stream gives the same results.
 pub struct DetStream {
     base: HmacSha256,
     counter: u32,
@@ -180,6 +268,10 @@ pub struct DetStream {
 
 impl DetStream {
     /// Copies the next bytes of the stream into `buf`.
+    ///
+    /// # Panics
+    ///
+    /// When about 2^37 bytes (2^32 blocks of 32 bytes) have been read from one stream.
     pub fn fill(&mut self, buf: &mut [u8]) {
         let mut done = 0;
         while done < buf.len() {
@@ -204,7 +296,23 @@ impl DetStream {
         u64::from_be_bytes(b)
     }
 
-    /// Uniform value in `0..n` (rejection sampling). Panics if `n == 0`.
+    /// Uniform value in `0..n` (rejection sampling), without the bias of a plain modulo.
+    ///
+    /// # Panics
+    ///
+    /// If `n == 0`.
+    ///
+    /// ```
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+    /// let mut s = p.stream("doc", b"dice");
+    /// let rolls: Vec<u64> = (0..5).map(|_| s.below(6) + 1).collect();
+    /// assert!(rolls.iter().all(|r| (1..=6).contains(r)));
+    ///
+    /// let mut again = p.stream("doc", b"dice");
+    /// let repeat: Vec<u64> = (0..5).map(|_| again.below(6) + 1).collect();
+    /// assert_eq!(rolls, repeat);
+    /// ```
     pub fn below(&mut self, n: u64) -> u64 {
         assert!(n > 0, "below(0)");
         let threshold = n.wrapping_neg() % n;
@@ -216,7 +324,20 @@ impl DetStream {
         }
     }
 
-    /// Uniformly chosen element. Panics on an empty slice.
+    /// Uniformly chosen element.
+    ///
+    /// # Panics
+    ///
+    /// On an empty slice.
+    ///
+    /// ```
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+    /// let names = ["alpha", "bravo", "charlie"];
+    /// let first = *p.stream("doc", b"jane").pick(&names);
+    /// assert!(names.contains(&first));
+    /// assert_eq!(*p.stream("doc", b"jane").pick(&names), first);
+    /// ```
     pub fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
         &items[self.below(items.len() as u64) as usize]
     }

@@ -76,6 +76,27 @@ fn v4_is_public(v: u32) -> bool {
 
 /// Maps an IPv4 address to another one of the same category, injectively.
 /// Never-replaced addresses are returned unchanged.
+///
+/// The categories are the private networks `10/8`, `172.16/12` and `192.168/16`, the
+/// link-local `169.254/16`, the shared `100.64/10`, and all other public addresses.
+/// Never replaced are `0/8`, `127/8`, `224/4` and `240/4`. Two distinct addresses never
+/// get the same replacement. This is the mapping of [`Ipv4Rule`]; a URL with an address
+/// as host uses it as well.
+///
+/// ```
+/// use sagiri_core::rules::ip::pseudonymize_v4;
+/// use std::net::Ipv4Addr;
+/// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+/// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+///
+/// let addr = Ipv4Addr::new(192, 0, 2, 10);
+/// let fake = pseudonymize_v4(addr, &p);
+/// assert_ne!(fake, addr);
+/// assert!(!fake.is_private() && !fake.is_loopback());
+/// assert_eq!(pseudonymize_v4(addr, &p), fake);
+///
+/// assert_eq!(pseudonymize_v4(Ipv4Addr::LOCALHOST, &p), Ipv4Addr::LOCALHOST);
+/// ```
 pub fn pseudonymize_v4(addr: Ipv4Addr, p: &Pseudonymizer) -> Ipv4Addr {
     if v4_never_replaced(addr) {
         return addr;
@@ -116,6 +137,26 @@ fn v6_kept(addr: Ipv6Addr) -> bool {
 
 /// Maps an IPv6 address to another one of the same category.
 /// Never-replaced addresses are returned unchanged.
+///
+/// The categories are link-local `fe80::/10` (the prefix and the zero bits are kept),
+/// unique local `fc00::/7`, global unicast `2000::/3` and all others. An IPv4-mapped
+/// address goes through [`pseudonymize_v4`]. Never replaced are `::`, `::1` and
+/// multicast `ff00::/8`. This is the mapping of [`Ipv6Rule`].
+///
+/// ```
+/// use sagiri_core::rules::ip::pseudonymize_v6;
+/// use std::net::Ipv6Addr;
+/// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+/// # let p = Pseudonymizer::new(&Key::from_bytes(std::array::from_fn(|i| i as u8)));
+///
+/// // A golden vector of the test key.
+/// let addr: Ipv6Addr = "2001:db8::1".parse()?;
+/// let fake: Ipv6Addr = "3f0c:37ea:8c11:a1a7:9cb1:1d09:d2b3:3305".parse()?;
+/// assert_eq!(pseudonymize_v6(addr, &p), fake);
+///
+/// assert_eq!(pseudonymize_v6(Ipv6Addr::LOCALHOST, &p), Ipv6Addr::LOCALHOST);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn pseudonymize_v6(addr: Ipv6Addr, p: &Pseudonymizer) -> Ipv6Addr {
     if v6_never_replaced(addr) {
         return addr;
@@ -142,6 +183,10 @@ pub fn pseudonymize_v6(addr: Ipv6Addr, p: &Pseudonymizer) -> Ipv6Addr {
 }
 
 /// Detects and replaces IPv4 addresses.
+///
+/// Matches dotted decimal; leading zeros are read as decimal, so `192.0.2.010` and
+/// `192.0.2.10` are one address with one replacement. Never-replaced addresses are not
+/// reported.
 pub struct Ipv4Rule;
 
 impl Rule for Ipv4Rule {
@@ -178,6 +223,9 @@ impl Rule for Ipv4Rule {
 }
 
 /// Detects and replaces IPv6 addresses.
+///
+/// Every textual form of an address that [`Ipv6Addr`] parses is accepted; the canonical
+/// form is the parsed address, and the replacement is written in its compressed form.
 pub struct Ipv6Rule;
 
 impl Rule for Ipv6Rule {

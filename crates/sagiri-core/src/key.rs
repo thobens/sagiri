@@ -1,4 +1,10 @@
 //! The secret key and its key file.
+//!
+//! A [`Key`] is the only secret of Sagiri: every replacement is derived from it. Keep it,
+//! and replacements stay the same across runs and versions; lose it, and they change.
+//!
+//! The key file holds the 32 key bytes as 64 lowercase hex characters and a newline. It
+//! must not be readable or writable by group or others.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -22,17 +28,25 @@ pub enum KeyError {
         "key file {} is malformed: expected 64 lowercase hex characters and a newline",
         .path.display()
     )]
-    Malformed { path: PathBuf },
+    Malformed {
+        /// The key file.
+        path: PathBuf,
+    },
     /// The key file is readable or writable by group or others.
     #[error(
         "key file {} has insecure permissions; run: chmod 600 {}",
         .path.display(), .path.display()
     )]
-    InsecurePermissions { path: PathBuf },
+    InsecurePermissions {
+        /// The key file.
+        path: PathBuf,
+    },
     /// An I/O operation on the key file failed.
     #[error("cannot access key file {}", .path.display())]
     Io {
+        /// The key file.
         path: PathBuf,
+        /// The underlying error.
         #[source]
         source: io::Error,
     },
@@ -42,6 +56,11 @@ pub enum KeyError {
 }
 
 /// 32 secret bytes. Zeroized on drop.
+///
+/// The bytes cannot be read back through the public API, and [`Debug`](fmt::Debug)
+/// prints `Key(<redacted>)`. Hand the key to [`Pseudonymizer::new`] to use it.
+///
+/// [`Pseudonymizer::new`]: crate::pseudo::Pseudonymizer::new
 pub struct Key(Zeroizing<[u8; KEY_LEN]>);
 
 impl fmt::Debug for Key {
@@ -52,6 +71,10 @@ impl fmt::Debug for Key {
 
 impl Key {
     /// A fresh key from the operating system's random source.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyError::Random`] if the operating system cannot provide random bytes.
     pub fn generate() -> Result<Key, KeyError> {
         let mut b = [0u8; KEY_LEN];
         getrandom::fill(&mut b).map_err(KeyError::Random)?;
@@ -61,6 +84,16 @@ impl Key {
     }
 
     /// Wraps existing key bytes.
+    ///
+    /// Any 32 bytes are a valid key. The same bytes always give the same replacements.
+    ///
+    /// ```
+    /// use sagiri_core::key::Key;
+    ///
+    /// // The test key of the golden vectors: 0x00, 0x01, … 0x1f.
+    /// let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    /// assert_eq!(format!("{key:?}"), "Key(<redacted>)");
+    /// ```
     pub fn from_bytes(bytes: [u8; 32]) -> Key {
         Key(Zeroizing::new(bytes))
     }
@@ -70,6 +103,35 @@ impl Key {
     }
 
     /// Loads the key at `path`, creating it (and parent directories) if missing.
+    ///
+    /// A new key is generated from the operating system's random source. Missing parent
+    /// directories are created with mode `0700`, the file with mode `0600`. The file
+    /// appears atomically: a concurrent caller sees either no file or the whole key, and
+    /// two callers racing to create it end up with the same key.
+    ///
+    /// # Errors
+    ///
+    /// - [`KeyError::Malformed`] if the file exists but is not 64 lowercase hex
+    ///   characters and a newline.
+    /// - [`KeyError::InsecurePermissions`] if group or others have any access to the file.
+    /// - [`KeyError::Io`] if a directory or the file cannot be created, read or written.
+    /// - [`KeyError::Random`] if a new key is needed and no random bytes are available.
+    ///
+    /// ```
+    /// use sagiri_core::key::Key;
+    /// use std::os::unix::fs::PermissionsExt;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let path = dir.path().join("sagiri/key");
+    ///
+    /// let first = Key::load_or_create(&path)?; // creates the file
+    /// let mode = std::fs::metadata(&path)?.permissions().mode();
+    /// assert_eq!(mode & 0o777, 0o600);
+    ///
+    /// let again = Key::load_or_create(&path)?; // loads the same key
+    /// # let _ = (first, again);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn load_or_create(path: &Path) -> Result<Key, KeyError> {
         let io_err = |source| KeyError::Io {
             path: path.to_path_buf(),
@@ -162,6 +224,31 @@ fn nibble(c: u8) -> Option<u8> {
 }
 
 /// Key file location: the flag, else `SAGIRI_KEY_FILE`, else `<data dir>/key`.
+///
+/// `env` looks up environment variables; pass `&|k| std::env::var_os(k)` for the process
+/// environment. An empty `SAGIRI_KEY_FILE` counts as unset. The data directory is the one
+/// of [`data_dir_with`]. Only the path is computed; nothing is read or created.
+///
+/// # Errors
+///
+/// [`PathError::NoHome`] if neither the flag nor `SAGIRI_KEY_FILE` is given and the data
+/// directory needs `HOME`, which is unset or empty.
+///
+/// ```
+/// use sagiri_core::key::resolve_path;
+/// use std::ffi::OsString;
+///
+/// let home = tempfile::tempdir()?;
+/// let env = |k: &str| (k == "HOME").then(|| OsString::from(home.path()));
+///
+/// let path = resolve_path(None, &env)?;
+/// assert_eq!(path, home.path().join(".local/share/sagiri/key"));
+///
+/// // A flag wins over everything else.
+/// let flag = home.path().join("other-key");
+/// assert_eq!(resolve_path(Some(&flag), &env)?, flag);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn resolve_path(
     flag: Option<&Path>,
     env: &dyn Fn(&str) -> Option<OsString>,

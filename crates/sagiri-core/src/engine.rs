@@ -1,4 +1,8 @@
 //! Runs rules over a text, resolves overlaps and renders the output.
+//!
+//! [`Engine::obfuscate`] replaces everything in one call. [`Engine::analyze`] and
+//! [`render`] split that into two steps, so that a caller can show the findings and
+//! choose which of them to replace.
 
 use std::fmt;
 use std::ops::Range;
@@ -8,22 +12,33 @@ use crate::pseudo::Pseudonymizer;
 use crate::rule::{Context, Kind, Rule};
 
 /// One replaced value found in the input.
+///
+/// `Debug` shows only the span and the kind, never the original or the replacement.
 #[derive(Clone)]
 pub struct Finding {
     /// Byte range in the input text.
     pub span: Range<usize>,
+    /// The kind of the rule that found the value.
     pub kind: Kind,
+    /// The text of [`span`](Self::span) in the input.
     pub original: String,
+    /// The value that replaces the original. It differs from the original and never
+    /// contains a line break.
     pub replacement: String,
 }
 
-/// Output text with the position of every finding in it.
+/// Output text with the position of every finding in it; see [`render`].
+///
+/// `Debug` shows only the spans, never the text.
 #[derive(Clone)]
 pub struct Rendered {
+    /// The output text.
     pub text: String,
+    /// One span per finding, in the order of the findings.
     pub spans: Vec<RenderedSpan>,
 }
 
+/// Where one finding ended up in [`Rendered::text`].
 #[derive(Clone, Debug)]
 pub struct RenderedSpan {
     /// Byte range in `Rendered::text`.
@@ -53,6 +68,13 @@ impl fmt::Debug for Rendered {
 }
 
 /// Runs a set of rules with one pseudonymizer.
+///
+/// For the same key, rules and input, an engine gives the same output on every call and
+/// in every future version. Every replacement is free of line breaks, so the output has
+/// the same lines as the input.
+///
+/// When matches of several rules overlap, the match that starts first wins; of matches
+/// with the same start the longest wins, and of those the one of the earlier rule.
 pub struct Engine {
     pseudo: Pseudonymizer,
     rules: Vec<Box<dyn Rule>>,
@@ -65,6 +87,22 @@ struct Candidate {
 }
 
 impl Engine {
+    /// An engine with `rules`, in this order of precedence, and an empty allowlist.
+    ///
+    /// ```
+    /// use sagiri_core::engine::Engine;
+    /// use sagiri_core::key::Key;
+    /// use sagiri_core::pseudo::Pseudonymizer;
+    /// use sagiri_core::rules::ip::Ipv4Rule;
+    ///
+    /// let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    /// let engine = Engine::new(Pseudonymizer::new(&key), vec![Box::new(Ipv4Rule)]);
+    ///
+    /// // Only IPv4 addresses are replaced.
+    /// let out = engine.obfuscate("192.0.2.10 and 2001:db8::1");
+    /// assert!(!out.starts_with("192.0.2.10"));
+    /// assert!(out.ends_with(" and 2001:db8::1"));
+    /// ```
     pub fn new(pseudo: Pseudonymizer, rules: Vec<Box<dyn Rule>>) -> Self {
         Engine {
             pseudo,
@@ -74,11 +112,31 @@ impl Engine {
     }
 
     /// Keeps every value that the allowlist covers.
+    ///
+    /// The allowlist replaces the previous one. It applies to whole matches and, through
+    /// [`Context::is_allowed`] and [`Context::nested`], to the parts that rules look at.
+    ///
+    /// ```
+    /// use sagiri_core::config::Allowlist;
+    /// # use sagiri_core::{engine::Engine, key::Key, pseudo::Pseudonymizer, rules::default_rules};
+    /// # let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    ///
+    /// let allow = Allowlist::new(&["198.51.100.0/24".to_string()])?;
+    /// let engine = Engine::new(Pseudonymizer::new(&key), default_rules()).with_allowlist(allow);
+    ///
+    /// assert_eq!(engine.obfuscate("198.51.100.7"), "198.51.100.7");
+    /// assert_ne!(engine.obfuscate("192.0.2.10"), "192.0.2.10");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn with_allowlist(mut self, allow: Allowlist) -> Self {
         self.allow = allow;
         self
     }
 
+    /// A context at the top level, as rules get it from [`analyze`](Self::analyze).
+    ///
+    /// Lets code outside a rule call shared mappings that take a context, such as
+    /// [`hostname::pseudonymize`](crate::rules::hostname::pseudonymize).
     pub fn context(&self) -> Context<'_> {
         Context {
             engine: self,
@@ -95,11 +153,46 @@ impl Engine {
     }
 
     /// Finds all values to replace, sorted by start, without overlaps.
+    ///
+    /// Values that the allowlist covers and matches whose replacement would equal the
+    /// original are left out. Pass the result to [`render`] to build the output.
+    ///
+    /// ```
+    /// use sagiri_core::rule::Kind;
+    /// # use sagiri_core::{engine::Engine, key::Key, pseudo::Pseudonymizer, rules::default_rules};
+    /// # let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    /// # let engine = Engine::new(Pseudonymizer::new(&key), default_rules());
+    ///
+    /// let text = "ping 192.0.2.10 from 2001:db8::1";
+    /// let findings = engine.analyze(text);
+    /// assert_eq!(findings.len(), 2);
+    /// assert_eq!(findings[0].kind, Kind::Ipv4);
+    /// assert_eq!(&text[findings[0].span.clone()], "192.0.2.10");
+    /// assert_eq!(findings[1].kind, Kind::Ipv6);
+    /// assert_ne!(findings[1].replacement, findings[1].original);
+    /// ```
     pub fn analyze(&self, text: &str) -> Vec<Finding> {
         self.analyze_at(text, 0)
     }
 
     /// Replaces every finding.
+    ///
+    /// The same as rendering all of [`analyze`](Self::analyze) with [`render`]. Text
+    /// outside the findings is copied unchanged.
+    ///
+    /// ```
+    /// # use sagiri_core::{engine::Engine, key::Key, pseudo::Pseudonymizer, rules::default_rules};
+    /// # let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    /// # let engine = Engine::new(Pseudonymizer::new(&key), default_rules());
+    ///
+    /// let out = engine.obfuscate("deploy to 192.0.2.10\nthen 192.0.2.10 again");
+    /// let lines: Vec<&str> = out.lines().collect();
+    /// assert_eq!(lines.len(), 2);
+    /// let fake = lines[0].strip_prefix("deploy to ").unwrap();
+    /// assert_ne!(fake, "192.0.2.10");
+    /// // The same original gets the same replacement everywhere.
+    /// assert_eq!(lines[1], format!("then {fake} again"));
+    /// ```
     pub fn obfuscate(&self, text: &str) -> String {
         self.obfuscate_at(text, 0)
     }
@@ -168,8 +261,36 @@ fn valid_range(text: &str, r: &Range<usize>) -> bool {
 
 /// Builds the output text. Findings for which `include` is false keep their original.
 ///
-/// `findings` must come from [`Engine::analyze`] on this same `text`, unmodified. Findings
-/// that are unsorted, overlapping or out of range for `text` make this function panic.
+/// `findings` must come from [`Engine::analyze`] on this same `text`, unmodified. The
+/// spans of the result tell where each finding is in the output and whether it was
+/// replaced.
+///
+/// # Panics
+///
+/// Findings that are unsorted, overlapping or out of range for `text` make this function
+/// panic.
+///
+/// ```
+/// use sagiri_core::engine::render;
+/// use sagiri_core::rule::Kind;
+/// # use sagiri_core::{engine::Engine, key::Key, pseudo::Pseudonymizer, rules::default_rules};
+/// # let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+/// # let engine = Engine::new(Pseudonymizer::new(&key), default_rules());
+///
+/// let text = "card 4111 1111 1111 1111 from 192.0.2.10";
+/// let findings = engine.analyze(text);
+/// assert_eq!(findings.len(), 2);
+///
+/// // Replace the address, keep the card number.
+/// let out = render(text, &findings, |f| f.kind == Kind::Ipv4);
+/// assert!(out.text.starts_with("card 4111 1111 1111 1111 from "));
+///
+/// let [card, ip] = &out.spans[..] else { panic!("two spans") };
+/// assert!(!card.replaced);
+/// assert_eq!(&out.text[card.range.clone()], findings[card.finding].original);
+/// assert!(ip.replaced);
+/// assert_eq!(&out.text[ip.range.clone()], findings[ip.finding].replacement);
+/// ```
 pub fn render(text: &str, findings: &[Finding], include: impl Fn(&Finding) -> bool) -> Rendered {
     let mut out = String::with_capacity(text.len());
     let mut spans = Vec::with_capacity(findings.len());

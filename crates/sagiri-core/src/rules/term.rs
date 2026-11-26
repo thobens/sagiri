@@ -28,6 +28,36 @@ pub struct TermRule {
 
 impl TermRule {
     /// Builds the rule from `Config::terms`.
+    ///
+    /// Terms are trimmed and matched literally, ignoring case, as whole words: a match
+    /// must not have a letter or digit directly before or after it. The canonical form is
+    /// the lowercase term, so `Zorblax` and `ZORBLAX` get the same replacement, each in its
+    /// own case. A replacement has the same length and layout as the term.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::Invalid`] with key `terms[index]` and no path, for a term that
+    /// contains a line break or has fewer than two characters after trimming.
+    ///
+    /// ```
+    /// use sagiri_core::engine::Engine;
+    /// use sagiri_core::rules::term::TermRule;
+    /// # use sagiri_core::{key::Key, pseudo::Pseudonymizer};
+    /// # let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+    ///
+    /// let rule = TermRule::new(&["Zorblax".to_string()])?;
+    /// let engine = Engine::new(Pseudonymizer::new(&key), vec![Box::new(rule)]);
+    ///
+    /// let lower = engine.obfuscate("zorblax");
+    /// assert_ne!(lower, "zorblax");
+    /// assert_eq!(lower.len(), 7);
+    /// assert_eq!(engine.obfuscate("ZORBLAX"), lower.to_uppercase());
+    /// // Not a whole word: kept.
+    /// assert_eq!(engine.obfuscate("zorblaxes"), "zorblaxes");
+    ///
+    /// assert!(TermRule::new(&["x".to_string()]).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new(terms: &[String]) -> Result<Self, ConfigError> {
         validate_terms(terms)?;
         let patterns = terms

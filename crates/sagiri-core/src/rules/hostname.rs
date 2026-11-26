@@ -107,6 +107,17 @@ fn suffix_of(name: &str) -> &str {
 /// True if the suffix of `host` is a known entry of the public suffix list or one of the
 /// internal suffixes `local`, `internal`, `lan`, `corp`, `intranet`, `localdomain` and
 /// `home.arpa`. A single-label host has no suffix.
+///
+/// The check ignores ASCII case and a trailing dot.
+///
+/// ```
+/// use sagiri_core::rules::hostname::has_known_suffix;
+///
+/// assert!(has_known_suffix("www.example.com"));
+/// assert!(has_known_suffix("WWW.EXAMPLE.ORG."));
+/// assert!(!has_known_suffix("notes.txt"));
+/// assert!(!has_known_suffix("fileserver"));
+/// ```
 pub fn has_known_suffix(host: &str) -> bool {
     let lower = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
     lower.contains('.') && (has_internal_suffix(&lower) || has_public_suffix(&lower))
@@ -114,6 +125,31 @@ pub fn has_known_suffix(host: &str) -> bool {
 
 /// Maps a hostname to a fake one. The public suffix is kept, every other label is replaced
 /// by pseudo-text of the same shape, seeded by the name from that label to the end.
+///
+/// The canonical form is the ASCII-lowercase name, so two spellings of one name get the
+/// same replacement, each keeping its case and trailing dot. Because each label is seeded
+/// by the rest of the name, names that share a parent domain share its replacement.
+/// The host is kept if the allowlist of `ctx` covers it, if it is a reserved name
+/// (`example.com`, `example.net`, `example.org` and names below them, and names ending in
+/// `.example`, `.invalid`, `.localhost` or `.test`), or if it is only a suffix. This is
+/// the mapping of [`HostnameRule`], of the host of a URL and of the domain of an email
+/// address.
+///
+/// ```
+/// use sagiri_core::rules::hostname::pseudonymize;
+/// # use sagiri_core::{engine::Engine, key::Key, pseudo::Pseudonymizer, rules::default_rules};
+/// # let key = Key::from_bytes(std::array::from_fn(|i| i as u8));
+/// # let engine = Engine::new(Pseudonymizer::new(&key), default_rules());
+/// let ctx = engine.context();
+///
+/// // Reserved names are kept.
+/// assert_eq!(pseudonymize("www.example.com", &ctx), "www.example.com");
+///
+/// let fake = pseudonymize("fileserver", &ctx);
+/// assert_ne!(fake, "fileserver");
+/// assert_eq!(fake.len(), "fileserver".len());
+/// assert_eq!(pseudonymize("FileServer", &ctx).to_lowercase(), fake);
+/// ```
 pub fn pseudonymize(host: &str, ctx: &Context<'_>) -> String {
     if ctx.is_allowed(host) {
         return host.to_string();
@@ -162,6 +198,11 @@ pub fn pseudonymize(host: &str, ctx: &Context<'_>) -> String {
 }
 
 /// Detects and replaces bare hostnames.
+///
+/// Reports a name of at least two labels with a known suffix (see [`has_known_suffix`])
+/// and replaces it with [`pseudonymize`]. Names that are common in code, such as
+/// `std.io`, and names whose last label is also a common file extension or identifier,
+/// such as `.rs` or `.py`, are left alone.
 pub struct HostnameRule;
 
 /// Candidate chains as (start, end, starts right after a percent escape). A `%XX` escape

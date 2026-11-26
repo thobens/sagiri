@@ -25,6 +25,8 @@ Obfuscates pasted text with consistent, key-derived fake values. Rust workspace,
 - No `rand` crate in `sagiri-core`. All randomness comes from `Pseudonymizer`.
 - Golden vectors are a compatibility contract. Changing one is a breaking change.
 - Test data is fictional: documentation IP ranges, published test card numbers.
+- Every public item of `sagiri-core` has a doc comment, and a new public entry point comes
+  with an example that runs as a doc test.
 
 ## Tickets
 

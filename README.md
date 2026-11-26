@@ -440,8 +440,10 @@ not commit it to a repository.
 scripts/check.sh
 ```
 
-This runs rustfmt, clippy with warnings as errors, and all tests. CI runs `scripts/check.sh`
-on Linux and macOS.
+This runs rustfmt, clippy with warnings as errors, and all tests, including the examples in
+the documentation of `sagiri-core`. It also builds that documentation with warnings as errors;
+`cargo doc -p sagiri-core --no-deps --open` shows it. CI runs `scripts/check.sh` on Linux and
+macOS.
 
 `scripts/x11-test.sh` runs the X11 integration tests of session mode on Linux. They start
 the real `sagiri-session` against a virtual X server and check clipboard replacement and the
