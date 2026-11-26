@@ -1,7 +1,7 @@
 ---
 id: "0037"
 title: Documented `sagiri-core` API with testable examples
-status: todo
+status: done
 depends_on: []
 ---
 

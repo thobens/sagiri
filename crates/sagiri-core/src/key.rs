@@ -119,6 +119,7 @@ impl Key {
     ///
     /// ```
     /// use sagiri_core::key::Key;
+    /// use sagiri_core::pseudo::Pseudonymizer;
     /// use std::os::unix::fs::PermissionsExt;
     ///
     /// let dir = tempfile::tempdir()?;
@@ -129,7 +130,8 @@ impl Key {
     /// assert_eq!(mode & 0o777, 0o600);
     ///
     /// let again = Key::load_or_create(&path)?; // loads the same key
-    /// # let _ = (first, again);
+    /// let derive = |k: &Key| Pseudonymizer::new(k).mimic("doc", b"seed", "abc123");
+    /// assert_eq!(derive(&first), derive(&again));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn load_or_create(path: &Path) -> Result<Key, KeyError> {
