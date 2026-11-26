@@ -210,4 +210,14 @@ mod tests {
     fn huge_term_does_not_panic() {
         assert!(TermRule::new(&["a".repeat(200_000)]).is_err());
     }
+
+    #[test]
+    fn length_reason_matches_the_limit() {
+        let e = TermRule::new(&["a".repeat(MAX_TERM_CHARS + 1)])
+            .map(|_| ())
+            .unwrap_err();
+        let reason = format!("term is longer than {MAX_TERM_CHARS} characters");
+        assert!(e.to_string().contains(&reason), "{e}");
+        assert!(TermRule::new(&["a".repeat(MAX_TERM_CHARS)]).is_ok());
+    }
 }

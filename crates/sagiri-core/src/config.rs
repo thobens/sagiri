@@ -842,6 +842,7 @@ phone = false
         assert!(e.contains("terms[0]"), "{e}");
         assert!(e.contains("term is longer than 1000 characters"), "{e}");
     }
+
     #[test]
     fn session_defaults() {
         let c = load_str("").unwrap();
