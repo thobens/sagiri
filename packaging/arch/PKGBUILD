@@ -3,8 +3,8 @@
 # `makepkg -f` in this directory.
 
 pkgname=sagiri
-pkgver=0.1.0
-pkgrel=2
+pkgver=0.1.2
+pkgrel=1
 pkgdesc='Obfuscates pasted text by replacing sensitive values with consistent, realistic-looking fake ones'
 arch=('x86_64' 'aarch64')
 url='https://github.com/thobens/sagiri'

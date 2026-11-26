@@ -9,11 +9,11 @@ fn sagiri() -> Command {
 
 #[test]
 fn version_flag_prints_version() {
-    sagiri()
-        .arg("--version")
-        .assert()
-        .success()
-        .stdout("sagiri 0.1.0\n");
+    sagiri().arg("--version").assert().success().stdout(concat!(
+        "sagiri ",
+        env!("CARGO_PKG_VERSION"),
+        "\n"
+    ));
 }
 
 #[test]
