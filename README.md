@@ -32,7 +32,45 @@ variables.
 
 ## Installing
 
-From source, build first and then copy the three binaries to `$PREFIX/bin`:
+### From a release
+
+Each release on GitHub has one archive per platform and a file `SHA256SUMS`:
+
+- `sagiri-<version>-x86_64-unknown-linux-gnu.tar.gz`
+- `sagiri-<version>-aarch64-unknown-linux-gnu.tar.gz`
+- `sagiri-<version>-aarch64-apple-darwin.tar.gz`
+
+The Linux archives are built on Ubuntu 24.04 and need a glibc at least that new. The macOS
+archive is for Apple silicon. On macOS `sagiri-session` only says that session mode is not
+supported there.
+
+Download the archive for the platform and `SHA256SUMS`, then check the checksum and the
+origin. `gh release verify` checks the release attestation that GitHub records for an
+immutable release; `gh attestation verify` checks that the archive was built by this
+repository's release workflow from the tagged commit:
+
+```
+sha256sum -c --ignore-missing SHA256SUMS
+gh release verify v<version> --repo thobens/sagiri
+gh attestation verify sagiri-<version>-<target>.tar.gz --repo thobens/sagiri
+```
+
+Unpack the archive and copy `bin/*` to a directory on the `PATH`:
+
+```
+tar -xzf sagiri-<version>-<target>.tar.gz
+install -m 755 sagiri-<version>-<target>/bin/* ~/.local/bin/
+                                  # or: sudo install -m 755 ... /usr/local/bin/
+```
+
+On Linux the archive also contains the systemd user unit
+`lib/systemd/user/sagiri-session.service`. Its `ExecStart=` points to
+`/usr/local/bin/sagiri-session`. Copy it as described in
+[Starting with systemd](#starting-with-systemd).
+
+### From source
+
+Build first and then copy the three binaries to `$PREFIX/bin`:
 
 ```
 make release
@@ -249,7 +287,21 @@ in `[session]` switches them off. The same messages always go to the standard er
 
 On Linux, `make install` and the Arch package install the systemd user unit
 `sagiri-session.service`. It runs `sagiri-session run` with the defaults, restarts it after
-a failure and stops it at logout. Enabling and starting it:
+a failure and stops it at logout.
+
+The Linux archive of a release contains the unit as
+`lib/systemd/user/sagiri-session.service`, with `ExecStart=/usr/local/bin/sagiri-session run`.
+It is copied to `~/.config/systemd/user/` (one user) or `/etc/systemd/user/` (all users);
+with the binaries in another directory, `ExecStart=` in the copy is changed to match. Then
+`systemctl --user daemon-reload` loads it:
+
+```
+install -Dm644 sagiri-<version>-<target>/lib/systemd/user/sagiri-session.service \
+    ~/.config/systemd/user/sagiri-session.service
+systemctl --user daemon-reload
+```
+
+Enabling and starting it:
 
 ```
 systemctl --user enable --now sagiri-session.service
@@ -434,6 +486,33 @@ Its result changes when a new advisory is published, so it is not part of
 `scripts/check.sh`. CI runs it on Linux and macOS once a day, on every push to `master` and
 on pull requests that change `Cargo.lock`, a `Cargo.toml`, the Makefile, the script or its
 workflow (`.github/workflows/audit.yml`).
+
+## Releasing
+
+A tag `v<version>` on `master` starts `.github/workflows/release.yml`. It runs
+`scripts/check.sh`, builds the three archives natively on Linux x86_64, Linux arm64 and
+macOS arm64 with `cargo auditable`, checks the binaries with `scripts/audit.sh`, attests the
+build provenance of each archive and publishes the release with the archives and
+`SHA256SUMS`. A manual run (`workflow_dispatch`) is a dry run: it builds the same archives
+as workflow artifacts and publishes nothing.
+
+1. Set the version in the workspace `Cargo.toml` and `pkgver` in `packaging/arch/PKGBUILD`,
+   with `pkgrel=1`.
+2. Run `cargo build` once, so that `Cargo.lock` follows.
+3. Merge to `master`.
+4. Create the tag `v<version>` on that commit and push the tag:
+
+   ```
+   git tag v<version>
+   git push origin v<version>
+   ```
+
+The workflow fails unless the tag is `v` followed by the workspace version and the tagged
+commit is on `master` (`scripts/release-tag-check.sh <tag>`). `scripts/package.sh <target>`
+packs the release binaries that are already built into `dist/`.
+
+A published release cannot be changed or repeated: its tag and assets are fixed. A mistake
+needs a new version.
 
 ## More
 

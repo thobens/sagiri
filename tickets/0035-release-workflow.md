@@ -1,7 +1,7 @@
 ---
 id: "0035"
 title: Release workflow with immutable releases
-status: todo
+status: done
 depends_on: ["0028", "0033", "0034"]
 ---
 
