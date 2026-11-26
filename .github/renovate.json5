@@ -27,9 +27,10 @@
   lockFileMaintenance: {
     enabled: false,
   },
-  // A release without a timestamp never counts as old enough for `minimumReleaseAge`, so
-  // it is never merged automatically. This is the default; set here so that a change of
-  // the default does not change the rules.
+  // A release without a timestamp never counts as old enough for `minimumReleaseAge`. With
+  // `internalChecksFilter: 'strict'` on the automerged rows it then gets neither a branch
+  // nor a pull request; it waits on the Dependency Dashboard. This is the default; set
+  // here so that a change of the default does not change the rules.
   minimumReleaseAgeBehaviour: 'timestamp-required',
   packageRules: [
     // Patch updates of any version: no branch and no pull request before the release is
