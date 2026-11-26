@@ -41,10 +41,9 @@ impl TermRule {
     ///
     /// # Panics
     ///
-    /// If a term is too long for the size limit of the `regex` crate. The limit depends
-    /// on the characters: a term of ASCII letters panics from about 131,000 characters, a
-    /// term of non-ASCII letters from about 62,000, a term of digits or punctuation from
-    /// about 327,000. [`Config::load`](crate::config::Config::load) does not check this.
+    /// If a term is too long for the size limit of the `regex` crate. That happens from
+    /// tens of thousands of characters, depending on the characters and the `regex`
+    /// version. [`Config::load`](crate::config::Config::load) does not check this.
     ///
     /// ```
     /// use sagiri_core::engine::Engine;
