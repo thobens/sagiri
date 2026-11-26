@@ -296,8 +296,13 @@ systemctl --user enable --now sagiri-session.service
 A wrong `hotkey`, a combination that is already grabbed, or a second session process makes
 the process exit with status 1. systemd restarts it 2 s after each failure, at most five
 starts within 30 s, and then leaves the unit in the state `failed`; the journal names the
-reason. After the cause is fixed, `systemctl --user restart sagiri-session.service` starts
-it again.
+reason. The limit also applies to manual starts, so after the cause is fixed the counter is
+cleared first:
+
+```
+systemctl --user reset-failed sagiri-session.service
+systemctl --user restart sagiri-session.service
+```
 
 The i3 lines above remain the way to start session mode without systemd.
 
