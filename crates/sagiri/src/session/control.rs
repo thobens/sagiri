@@ -668,8 +668,8 @@ mod tests {
     /// Names the path at which `stale_socket_helper` binds a listener and closes it again.
     const STALE_SOCKET_ENV: &str = "SAGIRI_TEST_STALE_SOCKET";
 
-    /// Not a test of its own: `stale_socket_is_replaced` runs it in a child process to
-    /// leave a stale socket file behind. Without the variable it does nothing.
+    /// Not a test of its own: `leave_stale_socket` runs it in a child process to leave a
+    /// stale socket file behind. Without the variable it does nothing.
     #[test]
     fn stale_socket_helper() {
         if let Some(path) = std::env::var_os(STALE_SOCKET_ENV) {
@@ -677,15 +677,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stale_socket_is_replaced() {
-        let (_dir, path) = socket();
-        // A child process binds and exits, like a session process that is gone. Had this
-        // process bound the listener, a child forked by a concurrent test could hold a
-        // copy of it until its `exec`, and the stale socket would accept connections.
+    /// Leaves a socket file at `path` that nothing listens on.
+    ///
+    /// A child process binds and exits, like a session process that is gone. Had this
+    /// process bound the listener, a child started by a concurrent test could hold a copy
+    /// of it for a moment, and the stale socket would accept connections.
+    fn leave_stale_socket(path: &Path) {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "session::control::tests::stale_socket_helper"])
-            .env(STALE_SOCKET_ENV, &path)
+            .env(STALE_SOCKET_ENV, path)
             .output()
             .unwrap();
         // The helper's output holds at most the socket path, never pasted text.
@@ -696,6 +696,12 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         assert!(path.exists());
+    }
+
+    #[test]
+    fn stale_socket_is_replaced() {
+        let (_dir, path) = socket();
+        leave_stale_socket(&path);
         assert!(UnixStream::connect(&path).is_err());
         let _listener = Listener::bind(&path).unwrap();
         assert!(UnixStream::connect(&path).is_ok());
@@ -743,10 +749,9 @@ mod tests {
             request(&path, Command::Status),
             Err(RequestError::NotRunning)
         ));
-        drop(UnixListener::bind(&path).unwrap());
-        assert!(path.exists());
+        leave_stale_socket(&path);
         let err = request(&path, Command::Status).unwrap_err();
-        assert!(matches!(err, RequestError::NotRunning));
+        assert!(matches!(err, RequestError::NotRunning), "{err:?}");
         assert_eq!(
             err.to_string(),
             "no session process is running; start one with 'sagiri-session run'"
