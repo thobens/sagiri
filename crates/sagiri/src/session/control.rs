@@ -21,6 +21,8 @@ use super::core::{Command, Event};
 const MAX_REQUEST: usize = 64;
 /// How long the server waits for a client to send its request.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
+/// How often the server looks for input on a connection whose read timeout cannot be set.
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// How long the server waits for the session loop to answer. Starting a session reads the
 /// clipboard, which can block while the owning application is slow.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -231,17 +233,37 @@ enum ReadError {
 /// Reads one request line within `READ_TIMEOUT` in total. The newline is optional when
 /// the client closes its side.
 fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, ReadError> {
+    read_request_with(stream, |stream, timeout| {
+        stream.set_read_timeout(Some(timeout))
+    })
+}
+
+/// `read_request` with the call that sets the read timeout, so that a test can make it
+/// fail the way macOS does.
+fn read_request_with(
+    stream: &mut UnixStream,
+    set_read_timeout: impl Fn(&UnixStream, Duration) -> io::Result<()>,
+) -> Result<Vec<u8>, ReadError> {
     let deadline = Instant::now() + READ_TIMEOUT;
     let mut buf = [0u8; MAX_REQUEST + 1];
     let mut len = 0;
+    // Whether the stream is non-blocking and polled, because no read timeout could be set.
+    let mut polling = false;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(ReadError::Timeout);
         }
-        stream
-            .set_read_timeout(Some(remaining))
-            .map_err(|_| ReadError::Io)?;
+        if !polling && set_read_timeout(stream, remaining).is_err() {
+            // macOS refuses every socket option (`EINVAL`) once the peer has closed its
+            // end, which `wake` and any client that does not wait for the reply do right
+            // after writing. What the peer sent is still there to be read, so the
+            // request must not be dropped: a `serve` loop that drops the wake-up request
+            // never ends. Without a timeout the read is bounded by polling instead. The
+            // stream stays non-blocking for the reply, which is short.
+            stream.set_nonblocking(true).map_err(|_| ReadError::Io)?;
+            polling = true;
+        }
         match stream.read(&mut buf[len..]) {
             Ok(0) => break,
             Ok(n) => {
@@ -257,6 +279,9 @@ fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, ReadError> {
                 }
             }
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) if polling && e.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(POLL_INTERVAL.min(remaining));
+            }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 return Err(ReadError::Timeout);
             }
@@ -543,10 +568,57 @@ mod tests {
         let id = listener.id().unwrap();
         let (tx, rx) = mpsc::channel();
         drop(rx);
-        let server = thread::spawn(move || serve(listener, tx));
+        let (done_tx, done) = mpsc::channel();
+        thread::spawn(move || {
+            serve(listener, tx);
+            let _ = done_tx.send(());
+        });
         assert!(wake(&path, id));
-        server.join().unwrap();
+        // A bounded wait instead of a join: a serve loop that misses the request blocks
+        // in `accept` for good, and the test then fails instead of hanging the run.
+        assert!(
+            done.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "the serve loop did not end"
+        );
         assert!(!path.exists());
+    }
+
+    /// Stands in for macOS, which sets no socket option once the peer has closed.
+    fn refuse(_: &UnixStream, _: Duration) -> io::Result<()> {
+        Err(ErrorKind::InvalidInput.into())
+    }
+
+    #[test]
+    fn request_is_read_when_the_timeout_cannot_be_set() {
+        // The peer has written its request and closed, as `wake` does.
+        for (sent, expected) in [("status\n", "status"), ("quit", "quit"), ("", "")] {
+            let (mut server, mut client) = UnixStream::pair().unwrap();
+            client.write_all(sent.as_bytes()).unwrap();
+            drop(client);
+            let line = read_request_with(&mut server, refuse).ok();
+            assert_eq!(line.as_deref(), Some(expected.as_bytes()), "{sent:?}");
+        }
+        // A request that arrives later is still read.
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            client.write_all(b"toggle\n").unwrap();
+            client
+        });
+        let line = read_request_with(&mut server, refuse).ok();
+        assert_eq!(line.as_deref(), Some(&b"toggle"[..]));
+        drop(writer.join().unwrap());
+    }
+
+    #[test]
+    fn silent_client_times_out_when_the_timeout_cannot_be_set() {
+        let (mut server, _client) = UnixStream::pair().unwrap();
+        let started = Instant::now();
+        let result = read_request_with(&mut server, refuse);
+        let waited = started.elapsed();
+        assert!(matches!(result, Err(ReadError::Timeout)));
+        assert!(waited >= READ_TIMEOUT, "{waited:?}");
+        assert!(waited < READ_TIMEOUT * 2, "{waited:?}");
     }
 
     #[test]
