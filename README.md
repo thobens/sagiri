@@ -20,7 +20,9 @@ The `Makefile` (GNU Make) wraps the release build and the installation:
 ```
 make                              # release build of sagiri, sagiri-cli and sagiri-session
 make sagiri-cli                   # release build of one binary
-make install PREFIX=~/.local      # copy the release binaries to ~/.local/bin
+make install PREFIX=~/.local USERUNITDIR=~/.local/share/systemd/user
+                                  # copy the release binaries to ~/.local/bin (and the
+                                  # systemd user unit on Linux, see Installing)
 sudo make install                 # copy them to /usr/local/bin
 make check                        # run scripts/check.sh
 ```
@@ -34,21 +36,17 @@ From source, build first and then copy the three binaries to `$PREFIX/bin`:
 
 ```
 make release
-make install PREFIX=~/.local      # or: sudo make install PREFIX=/usr/local
+make install PREFIX=~/.local USERUNITDIR=~/.local/share/systemd/user
+                                  # or: sudo make install PREFIX=/usr/local
 ```
 
-`make uninstall` with the same `PREFIX` removes them again.
+`make uninstall` with the same `PREFIX` and `USERUNITDIR` removes them again.
 
 On Linux, `make install` also installs the systemd user unit `sagiri-session.service` to
 `$USERUNITDIR` (default `$PREFIX/lib/systemd/user`); see
 [Starting with systemd](#starting-with-systemd). An install into the home directory needs
-`USERUNITDIR=~/.local/share/systemd/user`, because `~/.local/lib/systemd/user` is not on the
-search path of the user manager:
-
-```
-make install PREFIX=~/.local USERUNITDIR=~/.local/share/systemd/user
-make uninstall PREFIX=~/.local USERUNITDIR=~/.local/share/systemd/user
-```
+`USERUNITDIR=~/.local/share/systemd/user`, as in the example above, because
+`~/.local/lib/systemd/user` is not on the search path of the user manager.
 
 On Arch Linux and its derivatives, `make pkg` builds a package from the local checkout with
 `makepkg` (`packaging/arch/PKGBUILD`). It runs the tests and leaves the package in
@@ -295,9 +293,11 @@ systemctl --user enable --now sagiri-session.service
 - `journalctl --user -u sagiri-session.service` shows the messages of the process. They
   never contain copied text.
 
-A wrong `hotkey` or a combination that is already grabbed makes the process exit with
-status 1. systemd restarts it a few times and then leaves the unit in the state `failed`;
-the journal names the reason.
+A wrong `hotkey`, a combination that is already grabbed, or a second session process makes
+the process exit with status 1. systemd restarts it 2 s after each failure, at most five
+starts within 30 s, and then leaves the unit in the state `failed`; the journal names the
+reason. After the cause is fixed, `systemctl --user restart sagiri-session.service` starts
+it again.
 
 The i3 lines above remain the way to start session mode without systemd.
 

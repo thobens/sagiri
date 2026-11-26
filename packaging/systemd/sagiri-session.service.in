@@ -5,6 +5,8 @@ PartOf=graphical-session.target
 After=graphical-session.target
 ConditionEnvironment=DISPLAY
 ConditionEnvironment=!WAYLAND_DISPLAY
+StartLimitIntervalSec=30
+StartLimitBurst=5
 
 [Service]
 ExecStart=@BINDIR@/sagiri-session run

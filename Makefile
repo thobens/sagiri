@@ -55,12 +55,17 @@ install:
 	$(foreach b,$(BINS),install -Dm755 '$(RELEASE_DIR)/$(b)' '$(BINDIR)/$(b)' &&) true
 ifeq ($(UNAME_S),Linux)
 	install -d '$(DESTDIR)$(USERUNITDIR_DIR)'
-	sed 's|@BINDIR@|$(UNIT_BINDIR)|g' '$(UNIT_SRC)' > '$(UNIT_FILE)'
-	chmod 644 '$(UNIT_FILE)'
+	sed 's|@BINDIR@|$(UNIT_BINDIR)|g' '$(UNIT_SRC)' > '$(UNIT_FILE).tmp' || \
+		{ rm -f '$(UNIT_FILE).tmp'; exit 1; }
+	chmod 644 '$(UNIT_FILE).tmp'
+	mv -f '$(UNIT_FILE).tmp' '$(UNIT_FILE)'
 endif
 
 uninstall:
-	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)') '$(UNIT_FILE)'
+	rm -f $(foreach b,$(BINS),'$(BINDIR)/$(b)')
+ifeq ($(UNAME_S),Linux)
+	rm -f '$(UNIT_FILE)'
+endif
 
 # PKGEXT and PKGDEST are fixed so that the package name and location do not depend on the
 # local makepkg.conf.
