@@ -32,8 +32,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: rustup toolchain install
+      # On the ref, not the event: a dry run started from a tag shows whether the
+      # release of that tag would pass this check.
       - name: Check the tag
-        if: github.event_name == 'push'
+        if: github.ref_type == 'tag'
         env:
           TAG: ${{ github.ref_name }}
         run: scripts/release-tag-check.sh "$TAG"
