@@ -59,6 +59,11 @@ Read this file before starting any ticket. It holds everything the tickets share
 | [0030](0030-rules-not-a-table.md) | Reject a `rules` value that is not a table | 0018 |
 | [0031](0031-image-owner-answers-text-request.md) | Leave an image alone when its owner answers a text request with other data | 0021 |
 | [0032](0032-flaky-stale-socket-test.md) | Make `stale_socket_is_replaced` independent of tests that start processes | 0022 |
+| [0033](0033-systemd-user-unit.md) | systemd user unit for `sagiri-session` | 0027, 0029 |
+| [0034](0034-binary-vulnerability-check.md) | Vulnerability check of the built binaries | 0013, 0027 |
+| [0035](0035-release-workflow.md) | Release workflow with immutable releases | 0028, 0033, 0034 |
+| [0036](0036-renovate.md) | Renovate with automerge rules | 0013, 0034, 0035 |
+| [0037](0037-core-api-docs.md) | Documented `sagiri-core` API with testable examples | – |
 
 Order of the MVP tickets: 0001 → 0002 → 0003 are strictly sequential. After 0003, the
 tickets 0004, 0008 and 0009 are independent of each other. After 0004, the tickets 0005 and
@@ -83,9 +88,21 @@ Order of the tickets from 0014 on:
 - Expected trivial merge conflicts: module lines in `crates/sagiri/src/lib.rs`,
   `Cargo.toml` and `Cargo.lock`, and the user-facing `README.md`.
 
+Order of the tickets from 0033 on:
+
+- 0033, 0034 and 0037 are independent of each other and may run in any order.
+- 0035 needs 0033 (the unit is part of the release archives) and 0034 (the release audits
+  its binaries with the script of that ticket).
+- 0036 comes last of the tickets 0033 to 0036, so that it covers every workflow.
+- 0037 touches only `sagiri-core`, `scripts/check.sh` and two documentation lines.
+- 0034, 0035 and 0036 can be written and checked locally, but their workflows only run
+  once `master` is pushed to GitHub. Each ticket lists what can only be verified there.
+- Expected trivial merge conflicts: the user-facing `README.md`, the `Makefile` and
+  `CLAUDE.md`.
+
 This file already describes the state after all of these tickets (layout, pinned API, files,
-crates). A ticket from 0014 on edits the user-facing `README.md` and `CLAUDE.md` where its
-scope says so, and leaves this file alone.
+crates, workflows). A ticket from 0014 on edits the user-facing `README.md` and `CLAUDE.md`
+where its scope says so, and leaves this file alone.
 
 ## Definition of done (every ticket)
 
@@ -99,6 +116,9 @@ scope says so, and leaves this file alone.
   numbers.
 - Nothing that `scripts/check.sh` runs touches a real clipboard, a display server or a
   notification daemon. CI has none of them.
+- Once ticket 0037 is merged: every public item of `sagiri-core` has a doc comment, and a
+  new public entry point comes with an example that runs as a doc test. The rules for
+  examples are in that ticket.
 
 ## Product decisions
 
@@ -171,11 +191,19 @@ crates/sagiri/                library `sagiri` and three binaries
   src/session/x11.rs          0021  watcher thread; 0023 key grab; 0025 PRIMARY
   src/session/hotkey.rs       0023  hotkey parser and pure helpers
   src/session/settle.rs       0025  PRIMARY settle state machine
-scripts/check.sh              0001  the quality gate
+scripts/check.sh              0001  the quality gate; 0037 builds the core docs
 scripts/x11-test.sh           0026  opt-in tests against a real X server (Xvfb)
-Makefile                      0027
+scripts/audit.sh              0034  vulnerability check of the built binaries
+scripts/package.sh            0035  release archive for one target
+Makefile                      0027  0033 installs the unit; 0034 audit
 LICENSE-MIT, LICENSE-APACHE   0028
 packaging/arch/PKGBUILD       0029
+packaging/systemd/sagiri-session.service.in
+                              0033  user unit, rendered at install time
+.github/workflows/ci.yml      0013  runs scripts/check.sh
+.github/workflows/audit.yml   0034  runs scripts/audit.sh
+.github/workflows/release.yml 0035  builds, audits, packs and publishes a tag
+.github/renovate.json5        0036
 ```
 
 ### Core API (pinned; tickets 0002 and 0003 implement it)
@@ -400,6 +428,44 @@ Without the key, a replacement reveals nothing about the original beyond its kin
 With the key, small value spaces such as IPv4 can be enumerated, so the key file must stay
 private. Losing or replacing the key changes every replacement.
 
+## Workflows and automation (pinned; tickets 0034 to 0036 implement it)
+
+Rules for everything under `.github/`:
+
+- **Logic lives in `scripts/`.** A workflow installs tools and calls a script. Whatever CI
+  does can be run the same way on a developer's machine.
+- **`scripts/check.sh` stays offline and repeatable.** A check that needs the network or
+  whose result depends on the day (the audit) is its own script and its own workflow.
+- **Official actions only**: actions of the `actions` organisation. Everything else is
+  done with tools that are on the runners (`rustup`, `cargo`, `gh`).
+- **Actions are pinned by commit.** From ticket 0035 on, every `uses:` names a full commit
+  SHA with the version as a trailing comment. Renovate (ticket 0036) keeps both current.
+- **Least permissions.** A workflow starts with `permissions: contents: read`. A job that
+  needs more declares it for itself.
+- **No secret other than the `GITHUB_TOKEN`** of the run.
+- **Tools are installed with `cargo install --locked` at a pinned version.** The version
+  is a workflow `env` variable whose name ends in `_VERSION`.
+
+Release rules (ticket 0035):
+
+- A release is a tag `v<version>` on a commit of `master`, where `<version>` is the
+  workspace version.
+- Published releases are immutable. A mistake is fixed with a new version, never by
+  changing a release or moving a tag.
+- Release binaries are built with `cargo auditable`, audited, and published with a build
+  provenance attestation.
+
+Dependency update rules (ticket 0036):
+
+- Major updates, and minor updates of a `0.x` version, are merged by a person.
+- Other minor updates and all patch updates wait seven days after their release and are
+  then merged automatically if every check passes.
+- A failing golden vector test on an update is a finding, never a reason to change the
+  vector.
+
+Repository settings are the owner's steps. No ticket changes them: pushing `master`,
+enabling immutable releases, tag and branch rulesets, installing the Renovate app.
+
 ## Crates (versions seen on crates.io on 2026-11-11)
 
 Add dependencies with `cargo add` and read the current docs on docs.rs; several of these
@@ -444,10 +510,15 @@ Rules for the two crates added from ticket 0020 on:
 - OSC 52 clipboard for SSH sessions
 - File arguments (`sagiri file.log`)
 - UUIDs and cloud account identifiers
-- Release packaging beyond the local PKGBUILD of ticket 0029: tagged releases, an AUR
-  package, man pages, shell completions
+- Release packaging beyond the PKGBUILD of ticket 0029 and the archives of ticket 0035: an
+  AUR package, static (musl) builds, man pages, shell completions
 - Session mode on Wayland
-- A systemd user unit for `sagiri-session`
-- Starting the session process from `sagiri-session toggle` when none is running
+- Starting the session process from `sagiri-session toggle` when none is running, and
+  socket activation of the systemd unit
+- An exit code of `sagiri-session run` that tells a configuration error from a lost
+  display, so that systemd does not restart after the former
+- Lock file maintenance for transitive dependencies, and update pull requests from
+  security advisories
+- Doc comments and examples for the library target of `crates/sagiri`
 - Following keyboard layout changes while `sagiri-session` runs
 - Keeping rich clipboard formats in session mode when they hold no finding
