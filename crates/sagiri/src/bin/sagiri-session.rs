@@ -12,6 +12,7 @@ use sagiri::session::core::{Command, Event, Session};
 use sagiri::session::daemon::{self, Parts};
 use sagiri::session::hotkey;
 use sagiri::session::notify::Notifiers;
+use sagiri::session::tray::TrayState;
 use sagiri::setup;
 use sagiri_core::config::SessionConfig;
 use sagiri_core::paths;
@@ -107,10 +108,12 @@ fn run_daemon(socket: PathBuf, active: bool, opts: setup::Options) -> anyhow::Re
     // Checked before the backend is chosen, so that a wrong hotkey is reported on every
     // platform and without a display.
     hotkey::from_config(&settings)?;
+    // The session tells the tray icon its state through the notifiers.
+    let tray = settings.tray.then(TrayState::new);
     let session = Session::new(
         loaded.engine,
         Box::new(SystemClipboard::new()),
-        Box::new(Notifiers::for_session(&settings)),
+        Box::new(Notifiers::for_session(&settings, tray.as_ref())),
     )
     .with_primary(settings.primary);
     let exit = daemon::run(Parts {
@@ -119,7 +122,7 @@ fn run_daemon(socket: PathBuf, active: bool, opts: setup::Options) -> anyhow::Re
         start_active: active,
         sources: Box::new(move |events| {
             watch_signals(events.clone())?;
-            backend::start(events, &settings)
+            backend::start(events, &settings, tray)
         }),
     })?;
     Ok(daemon::exit_code(exit))

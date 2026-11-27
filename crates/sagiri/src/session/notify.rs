@@ -2,9 +2,12 @@
 
 use std::ffi::OsString;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 
 use sagiri_core::config::SessionConfig;
+
+use super::tray::{TrayNotifier, TrayState};
 
 /// What the user is told. No variant carries text, so no content can leak.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -158,11 +161,14 @@ pub struct Notifiers(pub Vec<Box<dyn Notifier>>);
 
 impl Notifiers {
     /// The notifiers of `sagiri-session run`: stderr always, desktop notifications as well
-    /// when `config.notify` is set.
-    pub fn for_session(config: &SessionConfig) -> Self {
+    /// when `config.notify` is set, and the state of the tray icon when there is one.
+    pub fn for_session(config: &SessionConfig, tray: Option<&Arc<TrayState>>) -> Self {
         let mut all: Vec<Box<dyn Notifier>> = vec![Box::new(StderrNotifier)];
         if config.notify {
             all.push(Box::new(CommandNotifier::new()));
+        }
+        if let Some(state) = tray {
+            all.push(Box::new(TrayNotifier::new(Arc::clone(state))));
         }
         Notifiers(all)
     }
@@ -419,9 +425,26 @@ mod tests {
             notify: false,
             ..SessionConfig::default()
         };
-        assert_eq!(Notifiers::for_session(&off).0.len(), 1);
+        assert_eq!(Notifiers::for_session(&off, None).0.len(), 1);
         let on = SessionConfig::default();
         assert!(on.notify);
-        assert_eq!(Notifiers::for_session(&on).0.len(), 2);
+        assert_eq!(Notifiers::for_session(&on, None).0.len(), 2);
+    }
+
+    #[test]
+    fn tray_false_adds_no_notifier() {
+        let config = SessionConfig {
+            notify: false,
+            ..SessionConfig::default()
+        };
+        assert_eq!(Notifiers::for_session(&config, None).0.len(), 1);
+        let state = TrayState::new();
+        let mut with_tray = Notifiers::for_session(&config, Some(&state));
+        assert_eq!(with_tray.0.len(), 2);
+        // The added notifier is the one that feeds the state.
+        with_tray.notify(Notice::Started);
+        assert!(state.is_active());
+        with_tray.notify(Notice::Stopped);
+        assert!(!state.is_active());
     }
 }

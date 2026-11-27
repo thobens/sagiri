@@ -65,6 +65,7 @@ Read this file before starting any ticket. It holds everything the tickets share
 | [0036](0036-renovate.md) | Renovate with automerge rules | 0013, 0034, 0035 |
 | [0037](0037-core-api-docs.md) | Documented `sagiri-core` API with testable examples | – |
 | [0038](0038-overlong-term-panics.md) | Reject a term that is too long instead of panicking | 0012, 0037 |
+| [0039](0039-system-tray-icon.md) | System tray icon | 0022, 0023 |
 
 Order of the MVP tickets: 0001 → 0002 → 0003 are strictly sequential. After 0003, the
 tickets 0004, 0008 and 0009 are independent of each other. After 0004, the tickets 0005 and
@@ -103,6 +104,9 @@ Order of the tickets from 0033 on:
 - 0038 is a bug ticket found while running 0037. It touches `rules/term.rs`, the tests of
   the config file and one line of the user-facing `README.md`, and is independent of the
   tickets 0033 to 0036.
+- 0039 adds the tray icon of session mode. It touches the `[session]` table, the wiring of
+  `sagiri-session run`, `tests/session_x11.rs` and the user-facing `README.md`, and is
+  independent of the tickets 0033 to 0038.
 
 This file already describes the state after all of these tickets (layout, pinned API, files,
 crates, workflows). A ticket from 0014 on edits the user-facing `README.md` and `CLAUDE.md`
@@ -189,10 +193,12 @@ crates/sagiri/                library `sagiri` and three binaries
   src/session/mod.rs          0019
   src/session/core.rs         0019  Session, Event, run_loop; 0024 mirror
   src/session/notify.rs       0019  Notice, Notifier; 0020 stderr; 0022 notify-send
+  src/session/tray.rs         0039  TrayState, TrayNotifier, icon, protocol helpers
   src/session/control.rs      0020  socket protocol, single instance
   src/session/daemon.rs       0020  wires session, control, signals, backend
-  src/session/backend.rs      0020  seam; 0021 detect()
+  src/session/backend.rs      0020  seam; 0021 detect(); 0039 starts the tray
   src/session/x11.rs          0021  watcher thread; 0023 key grab; 0025 PRIMARY
+  src/session/x11_tray.rs     0039  tray thread: docks the icon, draws it, reports clicks
   src/session/hotkey.rs       0023  hotkey parser and pure helpers
   src/session/settle.rs       0025  PRIMARY settle state machine
 scripts/check.sh              0001  the quality gate; 0037 builds the core docs
@@ -319,6 +325,7 @@ pub struct SessionConfig {
     pub hotkey: Option<String>,   // raw text, parsed by ticket 0023
     pub primary: PrimaryMode,     // default Off
     pub notify: bool,             // default true
+    pub tray: bool,               // 0039; default true
 }
 pub enum PrimaryMode { Off, Mirror, Watch }            // "off" | "mirror" | "watch"
 // `Config` gains `pub session: SessionConfig`.
@@ -364,11 +371,23 @@ impl Session {
     pub fn on_change(&mut self, selection: Selection) -> Outcome;
 }
 pub fn run_loop(session: &mut Session, events: &std::sync::mpsc::Receiver<Event>) -> Exit;
+
+// crates/sagiri/src/session/tray.rs                   // 0039
+/// What the tray icon shows. Written by the session thread, read by the tray thread.
+pub struct TrayState { /* .. */ }
+impl TrayState {
+    pub fn new() -> std::sync::Arc<Self>;              // inactive
+    pub fn is_active(&self) -> bool;
+    pub fn set_active(&self, active: bool);
+    /// `waker` runs after every change of the state.
+    pub fn set_waker(&self, waker: impl Fn() + Send + Sync + 'static);
+}
+pub struct TrayNotifier { /* .. */ }                   // a Notifier that feeds a TrayState
 ```
 
 Threads in `sagiri-session`: the main thread owns the `Session` and with it the clipboard.
-Every other thread (control socket, signals, X11 watcher) only sends `Event`s. Nothing but
-the main thread reads or writes a selection.
+Every other thread (control socket, signals, X11 watcher, tray) only sends `Event`s. Nothing
+but the main thread reads or writes a selection.
 
 Control protocol on the socket (ticket 0020): the client sends one line, `start`, `stop`,
 `toggle`, `status` or `quit`. The server answers with one line, `active`, `inactive` or
@@ -526,3 +545,5 @@ Rules for the two crates added from ticket 0020 on:
 - Doc comments and examples for the library target of `crates/sagiri`
 - Following keyboard layout changes while `sagiri-session` runs
 - Keeping rich clipboard formats in session mode when they hold no finding
+- A menu on the tray icon, an icon state for failures, and a StatusNotifierItem icon for
+  desktops whose tray does not speak XEmbed

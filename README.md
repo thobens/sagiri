@@ -283,6 +283,18 @@ missing, `run` prints one warning and keeps running without notifications. `noti
 in `[session]` switches them off. The same messages always go to the standard error of
 `sagiri-session run` as well. Notifications never contain copied text.
 
+The session process also puts an icon into the system tray. It shows three bars, like lines
+of text: thin and grey while no session is active, thick and green, like redacted lines,
+while one is. A click with the left mouse button on the icon switches the session on or
+off, like the hotkey.
+
+- The icon appears in trays that speak the XEmbed tray protocol: i3bar, polybar, the Xfce
+  and Plasma panels, stalonetray, trayer. A desktop without such a tray (GNOME Shell
+  without an extension, for example) shows no icon, and nothing else changes.
+- A tray that starts after the session process, or restarts, gets the icon as well.
+- The icon has no menu. `sagiri-session quit` ends the session process.
+- `tray = false` in `[session]` switches the icon off.
+
 ### Starting with systemd
 
 On Linux, `make install` and the Arch package install the systemd user unit
@@ -404,6 +416,7 @@ The `[session]` table is read by `sagiri-session` only. It has no effect on `sag
 hotkey = "ctrl+alt+o"
 primary = "mirror"
 notify = true
+tray = true
 ```
 
 - `hotkey` (default: none) is a key combination that `sagiri-session` grabs to switch the
@@ -430,6 +443,7 @@ notify = true
     The selection loses its highlight and can no longer be copied afterwards; see
     [Session mode](#session-mode) for all costs.
 - `notify` (default: `true`) switches desktop notifications on or off.
+- `tray` (default: `true`) switches the tray icon on or off (X11 only).
 
 Warning: the config file contains the sensitive terms in plain text. Do not share it and do
 not commit it to a repository.
@@ -446,8 +460,8 @@ the documentation of `sagiri-core`. It also builds that documentation with warni
 macOS.
 
 `scripts/x11-test.sh` runs the X11 integration tests of session mode on Linux. They start
-the real `sagiri-session` against a virtual X server and check clipboard replacement and the
-hotkey. The script needs `xvfb-run`, which comes with the X server's Xvfb package,
+the real `sagiri-session` against a virtual X server and check clipboard replacement, the
+hotkey and the tray icon. The script needs `xvfb-run`, which comes with the X server's Xvfb package,
 `xdotool`, `xclip` and `xsel`; it exits 2 if one of them is missing. It unsets
 `WAYLAND_DISPLAY`, so it also works from a Wayland session. The tests refuse to run unless
 the script has set `SAGIRI_X11_TEST`, so that `cargo test -- --ignored` never takes over the

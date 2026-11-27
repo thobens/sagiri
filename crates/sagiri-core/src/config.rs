@@ -120,6 +120,8 @@ pub struct SessionConfig {
     pub primary: PrimaryMode,
     /// Whether desktop notifications are shown.
     pub notify: bool,
+    /// Whether a tray icon shows the state of the session.
+    pub tray: bool,
 }
 
 impl Default for SessionConfig {
@@ -128,6 +130,7 @@ impl Default for SessionConfig {
             hotkey: None,
             primary: PrimaryMode::Off,
             notify: true,
+            tray: true,
         }
     }
 }
@@ -409,7 +412,7 @@ fn locate(table: &toml::de::DeTable<'_>, offset: usize) -> Option<(String, &'sta
                     let expected = match sk {
                         "hotkey" => "expected a string",
                         "primary" => r#"expected "off", "mirror" or "watch""#,
-                        "notify" => "expected a boolean",
+                        "notify" | "tray" => "expected a boolean",
                         _ => "invalid value",
                     };
                     (format!("session.{sk}"), expected)
@@ -849,6 +852,7 @@ phone = false
         assert_eq!(c.session.hotkey, None);
         assert_eq!(c.session.primary, PrimaryMode::Off);
         assert!(c.session.notify);
+        assert!(c.session.tray);
         assert_eq!(c.session, SessionConfig::default());
     }
 
@@ -860,6 +864,7 @@ phone = false
 hotkey = "ctrl+alt+o"
 primary = "mirror"
 notify = true
+tray = false
 "#,
         )
         .unwrap();
@@ -867,10 +872,12 @@ notify = true
             hotkey: Some("ctrl+alt+o".to_string()),
             primary: PrimaryMode::Mirror,
             notify: true,
+            tray: false,
         };
         assert_eq!(c.session, expected);
         let c = load_str("[session]\nnotify = false\nhotkey = \"not checked here\"").unwrap();
         assert!(!c.session.notify);
+        assert!(c.session.tray);
         assert_eq!(c.session.hotkey.as_deref(), Some("not checked here"));
         for src in ["session = { notify = false }", "session.notify = false"] {
             assert!(!load_str(src).unwrap().session.notify, "{src}");
@@ -927,6 +934,10 @@ notify = true
             (
                 "[session]\nnotify = \"hush\"",
                 "`session.notify`: expected a boolean",
+            ),
+            (
+                "[session]\ntray = \"hush\"",
+                "`session.tray`: expected a boolean",
             ),
         ];
         for (src, expected) in cases {
