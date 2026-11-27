@@ -62,9 +62,16 @@ fn start_x11(
     if let Some(state) = tray
         && let Err(e) = super::x11_tray::start(events, state)
     {
-        eprintln!("sagiri-session: the tray icon is not available: {e:#}");
+        eprintln!("{}", tray_warning(&e));
     }
     Ok(())
+}
+
+/// The line that `run` writes to standard error when the tray icon cannot be started.
+/// The reason names what failed, never clipboard content.
+#[cfg(target_os = "linux")]
+fn tray_warning(error: &anyhow::Error) -> String {
+    format!("sagiri-session: the tray icon is not available: {error:#}")
 }
 
 /// Never called: off Linux, `detect` always answers `Unsupported`. It exists so that
@@ -90,6 +97,17 @@ mod tests {
             .map(|(k, v)| ((*k).to_string(), OsString::from(v)))
             .collect();
         detect(&|name| map.get(name).cloned())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn tray_warning_names_the_reason() {
+        let error = anyhow::anyhow!("no such display").context("cannot connect to the X server");
+        assert_eq!(
+            tray_warning(&error),
+            "sagiri-session: the tray icon is not available: \
+             cannot connect to the X server: no such display"
+        );
     }
 
     #[cfg(target_os = "linux")]

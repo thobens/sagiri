@@ -283,6 +283,27 @@ mod tests {
         assert!(!state.is_active());
     }
 
+    #[test]
+    fn replaced_waker_is_dropped() {
+        let state = TrayState::new();
+        // Stands in for the connection that the waker of the tray thread holds.
+        let held = Arc::new(());
+        let captured = Arc::clone(&held);
+        state.set_waker(move || {
+            let _ = &captured;
+        });
+        assert_eq!(Arc::strong_count(&held), 2);
+        let runs = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&runs);
+        state.set_waker(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        });
+        assert_eq!(Arc::strong_count(&held), 1);
+        // Only the new waker runs.
+        state.set_active(true);
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
     /// The bars of `icon` as (left, top, right, bottom), right and bottom exclusive.
     fn edges(icon: &Icon) -> Vec<(i32, i32, i32, i32)> {
         icon.bars

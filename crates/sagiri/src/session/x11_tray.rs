@@ -113,6 +113,9 @@ pub fn start(events: Sender<Event>, state: Arc<TrayState>) -> anyhow::Result<()>
     .check()
     .context("cannot watch for a tray manager")?;
 
+    // The waker is in place before `start` returns, so that a change right after it, such
+    // as `--active`, reaches the icon. The guard moves into the thread and removes the
+    // waker when the thread ends, which releases the waker's hold on the connection.
     let waker_conn = Arc::clone(&conn);
     state.set_waker(move || {
         // With an empty event mask the message goes to the client that created the
@@ -124,23 +127,40 @@ pub fn start(events: Sender<Event>, state: Arc<TrayState>) -> anyhow::Result<()>
         }
         let _ = waker_conn.flush();
     });
+    let guard = ClearWaker(Arc::clone(&state));
+    let on_failure = Arc::clone(&state);
 
-    thread::Builder::new()
-        .name("tray".into())
-        .spawn(move || {
-            Tray {
-                conn: &conn,
-                events: &events,
-                state: &state,
-                atoms,
-                screen,
-                root,
-                dock: None,
-            }
-            .run();
-        })
-        .context("cannot start the tray thread")?;
+    let spawned = thread::Builder::new().name("tray".into()).spawn(move || {
+        let _guard = guard;
+        Tray {
+            conn: &conn,
+            events: &events,
+            state: &state,
+            atoms,
+            screen,
+            root,
+            dock: None,
+        }
+        .run();
+    });
+    if let Err(e) = spawned {
+        // Whether the closure, and with it the guard, is dropped on this path is up to
+        // the standard library. No waker may stay behind either way.
+        on_failure.set_waker(|| {});
+        return Err(e).context("cannot start the tray thread");
+    }
     Ok(())
+}
+
+/// Removes the waker of a `TrayState` when dropped. `set_active` holds the waker's lock
+/// while the waker runs, and the waker never touches the state, so the replacement waits
+/// for a running waker at most and cannot deadlock.
+struct ClearWaker(Arc<TrayState>);
+
+impl Drop for ClearWaker {
+    fn drop(&mut self) {
+        self.0.set_waker(|| {});
+    }
 }
 
 /// The tray thread ends: the connection is gone, or nobody listens for events any more.

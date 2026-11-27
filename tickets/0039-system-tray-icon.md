@@ -73,8 +73,8 @@ new binary and no new dependency.
     the icon too.
   - For a manager it creates the icon window with the visual from the manager's
     `_NET_SYSTEM_TRAY_VISUAL` property (the root visual if there is none), sets
-    `_XEMBED_INFO`, the window name `Sagiri` and the class `sagiri-session`, and sends the
-    dock request.
+    `_XEMBED_INFO`, the window name `Sagiri` (`WM_NAME` and `_NET_WM_NAME`) and `WM_CLASS`
+    with the instance `sagiri-session` and the class `Sagiri`, and sends the dock request.
   - The window is override-redirect, so that no window manager takes it while it is not
     embedded.
   - The background is transparent on a 32-bit visual and `ParentRelative` otherwise, so
@@ -84,10 +84,14 @@ new binary and no new dependency.
   - A press of mouse button 1 on the icon sends `Event::Toggle`. Other buttons do nothing.
   - When the manager's window is destroyed, or the icon window is destroyed or handed
     back to the root window, the thread destroys the icon window and waits for the next
-    manager.
+    manager. A manager that hands the icon back is not asked again until it announces
+    itself again.
 - The thread never reads or writes a selection and sends no event other than
   `Event::Toggle`. It ends silently when its connection ends: the watcher of ticket 0021
   reports the lost display.
+- The waker is in place when `start` returns, so that `--active` reaches the icon. It is
+  removed again if the thread cannot be spawned and when the thread ends, so that no
+  change of the state writes to a connection that nobody reads.
 
 ### Wiring
 
@@ -137,7 +141,9 @@ new binary and no new dependency.
   session mode, so that failure is a warning.
 - **Testing.** The pure part has unit tests. The X11 part is tested under Xvfb by
   `scripts/x11-test.sh`, with a small tray manager inside the test: it owns the
-  selection, embeds the icon window and reads its pixels.
+  selection, embeds, resizes and releases the icon window and reads its pixels. A resize
+  also exposes the whole window (bit gravity `Forget`), so the test of a resize shows that
+  the size is updated, but passes as well without the redraw after `ConfigureNotify`.
 
 ## Acceptance criteria
 
@@ -152,6 +158,8 @@ Unit tests in `tray.rs`:
 - [ ] `notices_set_the_state`: the table above, over all six notices.
 - [ ] `waker_runs_on_change_only`: three calls of `set_active`, two of them changes, run
       the waker twice.
+- [ ] `replaced_waker_is_dropped`: a waker that `set_waker` replaces is dropped, with
+      what it holds, and only the new one runs.
 - [ ] `icon_stays_inside_the_window`: for every size from 0x0 to 64x64 and both states,
       every rectangle is inside the window and none is empty.
 - [ ] `icon_is_a_centred_square`: in a 48x20 window all rectangles lie in the middle
@@ -170,20 +178,33 @@ Unit test in `notify.rs`:
       `SessionConfig` and an optional tray state, returns one more notifier with a state,
       and that notifier feeds the state.
 
+Unit test in `backend.rs`:
+
+- [ ] `tray_warning_names_the_reason`: the warning line that `run` writes when the tray
+      thread cannot be started, with the whole chain of the error.
+
 Tests in `crates/sagiri/tests/session_x11.rs` (ignored, run by `scripts/x11-test.sh`):
 
 - [ ] `x11_tray_docks_with_running_manager`: exactly one dock request arrives, the
-      window carries `_XEMBED_INFO` with the flag `XEMBED_MAPPED`, and it has the root
-      visual.
+      window carries `_XEMBED_INFO` with the flag `XEMBED_MAPPED`, has the root visual
+      and is override-redirect, `WM_NAME` and `_NET_WM_NAME` are `Sagiri`, and
+      `WM_CLASS` is `sagiri-session\0Sagiri\0`.
 - [ ] `x11_tray_docks_with_later_manager`: the manager starts after the session process.
 - [ ] `x11_tray_click_toggles`: a click with button 1 on the embedded icon switches the
-      session on, a second one off. Clicks with buttons 2 and 3 change nothing.
+      session on, a second one off. A click with button 3 and one with button 2 change
+      nothing, each checked on its own.
 - [ ] `x11_tray_icon_shows_state`: the embedded window shows the inactive colour, after
       `start` only the active colour on more pixels, and after `stop` the first picture
-      again.
+      again. The bar pixels match the area of `icon(..)`, and every other pixel shows the
+      tray's background, which is not 0 (`ParentRelative`).
 - [ ] `x11_tray_icon_uses_the_manager_visual`: for a manager that names a 32-bit visual
       the icon window has that visual, and the same picture test passes with opaque
-      pixels.
+      pixels on a transparent background (pixel value 0).
+- [ ] `x11_tray_icon_follows_resize`: the tray sizes the icon 40x40, then 48x30, and in
+      both states the picture matches `icon(..)` for that size.
+- [ ] `x11_tray_redocks_after_release`: a running tray hands the icon back to the root
+      window. The icon window is destroyed, no dock request follows until the tray
+      announces itself again, and then one with a new window arrives.
 - [ ] `x11_tray_redocks_after_manager_restart`: after the manager ends and another one
       announces itself, a second dock request arrives, the old icon window is gone, and
       a click on the new icon works. Run twice: with the icon destroyed along with the
