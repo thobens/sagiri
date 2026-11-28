@@ -1,0 +1,97 @@
+# Realistic paste formats, one case per line. Every line holds at least one value of a
+# kind Sagiri replaces, so a line that probe.sh reports as `kept` is a miss to judge, and
+# a `changed` line still has to be read: one value in it may have survived.
+#
+# All data is fictional: documentation and private address ranges, made-up names under
+# real suffixes, published test card numbers, example IBANs from the registry, phone
+# numbers from ranges reserved for fiction.
+#
+# Lines starting with # are removed before the run. Add a format when a review finds one
+# that is missing; never add text copied from a real system.
+#
+# --- IPv4: tool output
+64 bytes from 192.0.2.10: icmp_seq=1 ttl=57 time=11.3 ms
+ssh: connect to host 192.0.2.10 port 22: Connection refused
+IP 192.0.2.10.443 > 198.51.100.7.51514: Flags [S], seq 1, win 64240
+tcp   LISTEN 0      128    10.20.30.40:5432      0.0.0.0:*
+    inet 10.20.30.40/24 brd 10.20.30.255 scope global eth0
+default via 192.168.17.1 dev eth0 proto dhcp metric 100
+10.20.30.40 - - [12/Mar/2026:10:15:32 +0000] "GET /health HTTP/1.1" 200 2
+Mar 12 10:15:32 web01 sshd[911]: Failed password for root from 203.0.113.77 port 51022 ssh2
+-A INPUT -s 203.0.113.0/24 -p tcp --dport 22 -j DROP
+Nmap scan report for 172.16.5.9
+192.168.17.23   db01 db01.internal
+# --- IPv4: glued to something
+DB_HOST=10.20.30.40
+HOST_10.20.30.40
+mysql -h10.20.30.40 -uroot
+{"msg":"upstream timed out\n10.20.30.40 did not answer"}
+{"client":"198.51.100.7","status":502}
+backup_10.20.30.40.tar.gz
+X-Forwarded-For: 203.0.113.77, 10.20.30.40
+<address>192.0.2.10</address>
+服务器10.20.30.40无法连接
+# --- IPv6
+connect to 2001:db8:42::17: Connection refused
+    inet6 2001:db8:42::17/64 scope global
+    inet6 fe80::a1b2:c3ff:fed4:e5f6/64 scope link
+http://[2001:db8:42::17]:8080/status
+IP6 2001:db8:42::17.443 > 2001:db8:42::99.51234: Flags [S]
+X509v3 Subject Alternative Name: IP Address:2001:DB8:42:0:0:0:0:17
+listen [fd12:3456:789a::1]:53
+# --- Hostnames
+Connecting to build.acme-corp.com (build.acme-corp.com)|192.0.2.10|:443... connected.
+curl: (6) Could not resolve host: vault.acme-corp.internal
+build.acme-corp.com.	300	IN	A	192.0.2.10
+;; ANSWER SECTION: mail.acme-corp.co.uk. 3600 IN MX 10 mx1.acme-corp.co.uk.
+X509v3 Subject Alternative Name: DNS:api.acme-corp.com, DNS:*.acme-corp.com
+Host: api.acme-corp.io
+server_name staging.acme-corp.dev;
+kubectl get pods -n payments --context prod.acme-corp.cloud
+\\fileserver.acme-corp.lan\projects\falcon
+registry.acme-corp.com:5000/team/billing:1.4.2
+Received: from mx1.acme-corp.com (mx1.acme-corp.com [192.0.2.25]) by mail.partner-firm.net
+ip-10-20-30-40.eu-central-1.compute.internal
+SERVER=db01.acme-corp.corp;PORT=1433
+# --- URLs and connection strings
+https://deploy:hunter2@build.acme-corp.com:8443/jobs/falcon?token=abc123#top
+postgres://billing:s3cretpw@db01.acme-corp.internal:5432/invoices
+jdbc:postgresql://db01.acme-corp.internal:5432/invoices?user=billing&password=s3cretpw
+mongodb+srv://app:s3cretpw@cluster0.acme-corp.net/prod?retryWrites=true
+git@git.acme-corp.com:platform/billing.git
+origin	https://git.acme-corp.com/platform/billing.git (fetch)
+[the runbook](https://wiki.acme-corp.com/display/OPS/Failover+runbook)
+<a href="https://intranet.acme-corp.com/hr/salaries.xlsx">salaries</a>
+redirect_uri=https%3A%2F%2Flogin.acme-corp.com%2Fcallback
+s3://acme-corp-backups/db/2026-03-12.sql.gz
+ldap://dc01.acme-corp.local:389/dc=acme-corp,dc=local
+# --- Email addresses
+From: "Jane Doe" <jane.doe@acme-corp.com>
+mailto:jane.doe@acme-corp.com?subject=Invoice
+Author: jane.doe <jane.doe@acme-corp.com>
+user=jane.doe@acme-corp.com
+"email":"jane.doe+billing@acme-corp.co.uk",
+jane.doe@acme-corp.com;john.roe@acme-corp.com
+Reviewed-by: jane_doe@acme-corp.dev
+# --- Payment cards
+card 4111 1111 1111 1111 exp 12/29
+card=4111111111111111&cvv=123
+5555-5555-5555-4444
+"pan":"5555555555554444"
+Amex 3782 822463 10005
+VISA ************1111 charged, full number 4111.1111.1111.1111
+# --- IBANs
+IBAN: DE89 3704 0044 0532 0130 00
+iban=DE89370400440532013000
+GB82 WEST 1234 5698 7654 32
+Zahlung an CH93 0076 2011 6238 5295 7, Verwendungszweck 4711
+IBAN DE89-3704-0044-0532-0130-00
+# --- Phone numbers
+Call +1 202 555 0143 after 9
+tel:+12025550143
++44 20 7946 0958
++44 (0)20 7946 0958
++49 30 23125 123
+Mobile: +1 (202) 555-0143 ext. 12
+whatsapp://send?phone=12025550143
+phone: 0049 30 23125 123

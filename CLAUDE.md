@@ -28,6 +28,15 @@ Obfuscates pasted text with consistent, key-derived fake values. Rust workspace,
 - Every public item of `sagiri-core` has a doc comment, and a new public entry point comes
   with an example that runs as a doc test.
 
+## Security review
+
+- `/sagiri-security-review [full | <ticket id or branch> | <path or area>]` reviews a change
+  or the code base for leaks of content and key material and for what the output gives
+  away. It is defined in `.claude/skills/sagiri-security-review/SKILL.md`.
+- The guarantees, the adversaries and the leakage budget it reviews against are in
+  `.claude/skills/sagiri-security-review/references/guarantees.md`. A change that alters
+  what a rule keeps or what the output reveals updates that file.
+
 ## Tickets
 
 - Tickets live in `tickets/`. Start with `tickets/README.md`.
